@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Tajawal } from "next/font/google";
 import "./globals.css";
 
@@ -11,6 +11,18 @@ const tajawal = Tajawal({
 export const metadata: Metadata = {
   title: "نظام إدارة العروض - NMA",
   description: "نظام إدارة عروض المنتجات والفروع",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "NMA Admin",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#150971",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
