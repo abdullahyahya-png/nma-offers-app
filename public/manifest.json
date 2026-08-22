@@ -1,0 +1,14 @@
+{
+  "name": "إدارة عروض NMA",
+  "short_name": "NMA Admin",
+  "description": "لوحة تحكم إدارة عروض المنتجات - NMA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#150971",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/logo.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logo.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "بوابة الفروع - NMA",
+  "short_name": "NMA Branch",
+  "description": "بوابة عروض الفروع - NMA",
+  "start_url": "/branch",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#150971",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/logo.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logo.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
