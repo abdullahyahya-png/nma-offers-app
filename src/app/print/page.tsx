@@ -329,7 +329,7 @@ export default function PrintPage() {
             className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors"
           >
             <ListPlus size={13} />
-            أضف الكل لقائمة الطباعة
+            أضف هذي الباركودات لقائمة الطباعة
           </button>
         </div>
 
