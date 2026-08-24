@@ -5,7 +5,7 @@ import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'
 import { renderPdfToCanvas } from '../../lib/pdfBackground'
 import InstallPWAButton from '../components/InstallPWAButton'
-import { Search, Printer, Download, Package, ListPlus, Layers, X } from 'lucide-react'
+import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid } from 'lucide-react'
 
 interface OfferItem {
   id: string
@@ -47,6 +47,7 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'queue'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [status, setStatus] = useState('')
@@ -328,7 +329,7 @@ export default function PrintPage() {
     <div className="min-h-screen bg-[var(--background)]">
       <InstallPWAButton />
       <header className="bg-white border-b-4 border-[var(--navy)]">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
             <p className="text-[var(--red)] text-[11px] font-bold">واجهة الطباعة السريعة</p>
@@ -337,218 +338,281 @@ export default function PrintPage() {
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-        {status && (
-          <div className="p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
-            {status}
-          </div>
-        )}
-
-        <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-          <div className="relative">
-            <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="ابحث بالاسم أو الباركود"
-              autoFocus
-              className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-            />
-          </div>
-        </div>
-
-        {/* ملصق متنوع (مو مرتبط بباركود بالنظام) */}
-        <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-          <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
-            <Layers size={16} />
-            ملصق متنوع
-          </h2>
-          <p className="text-xs text-gray-500 font-medium mb-3">
-            لأي حالة خاصة — منتج مو موجود بالنظام، أو تشكيلة نكهات/أحجام بنفس السعر
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-            <input
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              placeholder="اسم/عنوان المنتج"
-              className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-            />
-            <input
-              value={customPrevPrice}
-              onChange={(e) => setCustomPrevPrice(e.target.value)}
-              type="number"
-              placeholder="السعر السابق"
-              className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-            />
-            <input
-              value={customOfferPrice}
-              onChange={(e) => setCustomOfferPrice(e.target.value)}
-              type="number"
-              placeholder="سعر العرض"
-              className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-            />
-            <input
-              value={customNote}
-              onChange={(e) => setCustomNote(e.target.value)}
-              placeholder="ملاحظة مكان الباركود (اختياري)"
-              className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-            />
-          </div>
-          <div className="flex items-center gap-2">
+      <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col md:flex-row gap-6 items-start">
+        <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6 space-y-2">
+          <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm space-y-1">
             <button
-              onClick={() => handleCustomLabelAction('download')}
-              disabled={customGenerating}
-              className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+              onClick={() => setActiveSection('general')}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                activeSection === 'general' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
             >
-              <Download size={13} />
-              تحميل
+              <span className="flex items-center gap-2">
+                <LayoutGrid size={15} />
+                كل العروض
+              </span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{allItems.length}</span>
             </button>
             <button
-              onClick={() => handleCustomLabelAction('print')}
-              disabled={customGenerating}
-              className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+              onClick={() => setActiveSection('custom')}
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                activeSection === 'custom' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
             >
-              <Printer size={13} />
-              {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+              <Layers size={15} />
+              ملصق متنوع
+            </button>
+            <button
+              onClick={() => setActiveSection('bulk')}
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                activeSection === 'bulk' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <ListPlus size={15} />
+              إضافة عدة باركودات
+            </button>
+            <button
+              onClick={() => setActiveSection('queue')}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                activeSection === 'queue' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Printer size={15} />
+                قائمة الطباعة
+              </span>
+              {printQueue.length > 0 && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{printQueue.length}</span>
+              )}
             </button>
           </div>
-        </div>
+        </aside>
 
-        {/* إضافة عدة باركودات دفعة وحدة */}
-        <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-          <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-2">
-            <ListPlus size={16} />
-            إضافة عدة باركودات دفعة وحدة
-          </h2>
-          <p className="text-xs text-gray-500 font-medium mb-3">
-            الصق أو اكتب عدة باركودات (كل وحدة بسطر، أو مفصولة بفاصلة أو مسافة)
-          </p>
-          <textarea
-            value={bulkBarcodesText}
-            onChange={(e) => setBulkBarcodesText(e.target.value)}
-            rows={3}
-            placeholder="6281007020001&#10;6281007020002&#10;6281007020003"
-            dir="ltr"
-            className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20 resize-none"
-          />
-          <button
-            onClick={handleBulkAdd}
-            className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors"
-          >
-            <ListPlus size={13} />
-            أضف هذي الباركودات لقائمة الطباعة
-          </button>
-        </div>
+        <div className="flex-1 min-w-0 space-y-4">
+          {status && (
+            <div className="p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
+              {status}
+            </div>
+          )}
 
-        {/* قائمة الطباعة المختارة */}
-        {printQueue.length > 0 && (
-          <div className="bg-emerald-50 rounded-2xl border-2 border-emerald-300 overflow-hidden shadow-sm">
-            <div className="p-4 border-b-2 border-emerald-200 bg-emerald-100/50 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="font-black text-sm text-emerald-800 flex items-center gap-2">
+          {activeSection === 'custom' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
                 <Layers size={16} />
-                قائمة الطباعة ({printQueue.length})
+                ملصق متنوع
               </h2>
+              <p className="text-xs text-gray-500 font-medium mb-4">
+                لأي حالة خاصة — منتج مو موجود بالنظام، أو تشكيلة نكهات/أحجام بنفس السعر
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <input
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="اسم/عنوان المنتج"
+                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customPrevPrice}
+                  onChange={(e) => setCustomPrevPrice(e.target.value)}
+                  type="number"
+                  placeholder="السعر السابق"
+                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customOfferPrice}
+                  onChange={(e) => setCustomOfferPrice(e.target.value)}
+                  type="number"
+                  placeholder="سعر العرض"
+                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customNote}
+                  onChange={(e) => setCustomNote(e.target.value)}
+                  placeholder="ملاحظة مكان الباركود (اختياري)"
+                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+              </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleQueueAction('download')}
-                  disabled={generatingQueue}
-                  className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  onClick={() => handleCustomLabelAction('download')}
+                  disabled={customGenerating}
+                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                 >
                   <Download size={13} />
-                  تحميل الكل
+                  تحميل
                 </button>
                 <button
-                  onClick={() => handleQueueAction('print')}
-                  disabled={generatingQueue}
-                  className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  onClick={() => handleCustomLabelAction('print')}
+                  disabled={customGenerating}
+                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                 >
                   <Printer size={13} />
-                  {generatingQueue ? 'جاري التوليد...' : 'طباعة الكل'}
-                </button>
-                <button
-                  onClick={clearQueue}
-                  className="text-emerald-700 hover:text-[var(--red)] text-xs font-bold underline"
-                >
-                  تفريغ
+                  {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
                 </button>
               </div>
             </div>
-            <div className="divide-y divide-emerald-200 max-h-64 overflow-y-auto">
-              {printQueue.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-3 p-2.5 px-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-emerald-900 truncate">{item.product_name}</p>
-                    <p className="text-[11px] text-emerald-700">{item.barcode}</p>
-                  </div>
-                  <button
-                    onClick={() => removeFromQueue(item.id)}
-                    className="text-emerald-600 hover:text-[var(--red)] shrink-0"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
 
-        <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
-          <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
-            <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
-              <Package size={16} />
-              كل العروض ({filteredItems.length})
-            </h2>
-          </div>
-          <div className="overflow-x-auto">
-            <div className="max-h-[650px] overflow-y-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
-                  <tr>
-                    <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
-                    <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
-                    <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
-                    <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
-                    <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredItems.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</td>
-                    </tr>
-                  )}
-                  {filteredItems.map((item, i) => (
-                    <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors`}>
-                      <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
-                      <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
-                      <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
-                      <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
-                      <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleAction(item, 'download')}
-                            disabled={printingId === item.id}
-                            className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            <Download size={13} />
-                            تحميل
-                          </button>
-                          <button
-                            onClick={() => handleAction(item, 'print')}
-                            disabled={printingId === item.id}
-                            className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            <Printer size={13} />
-                            طباعة
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {activeSection === 'bulk' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                <ListPlus size={16} />
+                إضافة عدة باركودات دفعة وحدة
+              </h2>
+              <p className="text-xs text-gray-500 font-medium mb-3">
+                الصق أو اكتب عدة باركودات (كل وحدة بسطر، أو مفصولة بفاصلة أو مسافة)
+              </p>
+              <textarea
+                value={bulkBarcodesText}
+                onChange={(e) => setBulkBarcodesText(e.target.value)}
+                rows={6}
+                placeholder="6281007020001&#10;6281007020002&#10;6281007020003"
+                dir="ltr"
+                className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20 resize-none"
+              />
+              <button
+                onClick={handleBulkAdd}
+                className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors"
+              >
+                <ListPlus size={13} />
+                أضف هذي الباركودات لقائمة الطباعة
+              </button>
             </div>
-          </div>
+          )}
+
+          {activeSection === 'queue' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+              <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                  <Printer size={16} />
+                  قائمة الطباعة ({printQueue.length})
+                </h2>
+                {printQueue.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleQueueAction('download')}
+                      disabled={generatingQueue}
+                      className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <Download size={13} />
+                      تحميل الكل
+                    </button>
+                    <button
+                      onClick={() => handleQueueAction('print')}
+                      disabled={generatingQueue}
+                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <Printer size={13} />
+                      {generatingQueue ? 'جاري التوليد...' : 'طباعة الكل'}
+                    </button>
+                    <button
+                      onClick={clearQueue}
+                      className="text-[var(--red)] hover:underline text-xs font-bold"
+                    >
+                      تفريغ
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                {printQueue.length === 0 && (
+                  <p className="p-6 text-center text-gray-400 text-sm">
+                    قائمة الطباعة فاضية — أضف منتجات من "كل العروض" أو "إضافة عدة باركودات"
+                  </p>
+                )}
+                {printQueue.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 p-3.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-[var(--navy)] truncate">{item.product_name}</p>
+                      <p className="text-xs text-gray-500">{item.barcode}</p>
+                    </div>
+                    <button
+                      onClick={() => removeFromQueue(item.id)}
+                      className="text-gray-400 hover:text-[var(--red)] shrink-0"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'general' && (
+            <>
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+                <div className="relative">
+                  <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    placeholder="ابحث بالاسم أو الباركود"
+                    autoFocus
+                    className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Package size={16} />
+                    كل العروض ({filteredItems.length})
+                  </h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                        <tr>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                          <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredItems.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</td>
+                          </tr>
+                        )}
+                        {filteredItems.map((item, i) => (
+                          <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors`}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                            <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleAction(item, 'download')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Download size={13} />
+                                  تحميل
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'print')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Printer size={13} />
+                                  طباعة
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
