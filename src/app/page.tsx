@@ -262,11 +262,13 @@ export default function AdminPage() {
   const refreshLabelPreview = async () => {
     const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
     const url = `${data.publicUrl}?t=${Date.now()}`
+    console.log('محاولة تحميل قالب الملصق من:', url)
     try {
       const canvas = await renderPdfToCanvas(url, 600, 1000)
       setLabelPreviewUrl(canvas.toDataURL('image/png'))
       setLabelExists(true)
-    } catch {
+    } catch (err) {
+      console.error('فشل تحميل/رسم قالب الملصق:', err)
       setLabelPreviewUrl(null)
       setLabelExists(false)
     }
