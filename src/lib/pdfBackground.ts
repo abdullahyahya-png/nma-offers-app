@@ -1,8 +1,17 @@
-import * as pdfjsLib from 'pdfjs-dist'
+// نأخر استيراد pdfjs-dist لحد ما الدالة تتنفذ فعلياً بالمتصفح (Client)
+// عشان ما يصطدم بعملية بناء Next.js على السيرفر (اللي ما فيه DOMMatrix أو أي API متصفح)
+let pdfjsLibPromise: Promise<typeof import('pdfjs-dist')> | null = null
 
-// يشغّل الـ worker من CDN عشان ما نحتاج نعدّل إعدادات البناء (webpack/turbopack)
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+async function getPdfjsLib() {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = import('pdfjs-dist').then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+      return lib
+    })
+  }
+  return pdfjsLibPromise
+}
 
 /**
  * يفتح أول صفحة من ملف PDF ويرسمها على Canvas بجودة تناسب المقاس المطلوب.
@@ -13,10 +22,10 @@ export async function renderPdfToCanvas(
   targetWidth: number,
   targetHeight: number
 ): Promise<HTMLCanvasElement> {
+  const pdfjsLib = await getPdfjsLib()
   const pdf = await pdfjsLib.getDocument({ url }).promise
   const page = await pdf.getPage(1)
   const baseViewport = page.getViewport({ scale: 1 })
-  // نكبّر لأكبر بعد مطلوب عشان الجودة تكفي حتى لو الملصق طلع أطول أو أعرض من نسبة الـ PDF
   const scale = Math.max(targetWidth / baseViewport.width, targetHeight / baseViewport.height)
   const viewport = page.getViewport({ scale })
 
