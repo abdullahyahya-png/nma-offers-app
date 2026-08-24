@@ -269,7 +269,7 @@ export default function PrintPage() {
         name: customName.trim(),
         offerPriceText: Number(customOfferPrice).toFixed(2),
         prevPriceText: Number(customPrevPrice).toFixed(2),
-        barcodeText: customNote.trim() || 'عرض خاص',
+        barcodeText: customNote.trim(),
       }
 
       const canvas = await renderLabelCanvas(data)
