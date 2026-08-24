@@ -326,10 +326,10 @@ export default function PrintPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
       <InstallPWAButton />
       <header className="bg-white border-b-4 border-[var(--navy)]">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
+        <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
             <p className="text-[var(--red)] text-[11px] font-bold">واجهة الطباعة السريعة</p>
@@ -338,12 +338,12 @@ export default function PrintPage() {
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col md:flex-row gap-6 items-start">
-        <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6 space-y-2">
-          <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm space-y-1">
+      <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 flex flex-col md:flex-row gap-4 md:gap-6 items-start">
+        <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6">
+          <div className="w-full bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
             <button
               onClick={() => setActiveSection('general')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+              className={`shrink-0 md:w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
                 activeSection === 'general' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -355,7 +355,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('custom')}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+              className={`shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
                 activeSection === 'custom' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -364,7 +364,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('bulk')}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+              className={`shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
                 activeSection === 'bulk' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -373,7 +373,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('queue')}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+              className={`shrink-0 md:w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
                 activeSection === 'queue' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -388,7 +388,7 @@ export default function PrintPage() {
           </div>
         </aside>
 
-        <div className="flex-1 min-w-0 space-y-4">
+        <div className="flex-1 min-w-0 w-full space-y-4">
           {status && (
             <div className="p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
               {status}
