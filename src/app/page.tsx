@@ -381,7 +381,7 @@ export default function AdminPage() {
       const sheetName = workbook.SheetNames[0]
       const sheet = workbook.Sheets[sheetName]
       const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 })
-      const parsedItems = rows.slice(1)
+      const rawParsedItems = rows.slice(1)
         .filter((row) => row.length >= 4 && row[0])
         .map((row) => ({
           barcode: String(row[0]).trim(),
@@ -389,6 +389,12 @@ export default function AdminPage() {
           previous_price: Number(row[2]),
           offer_price: Number(row[3]),
         }))
+
+      // نشيل التكرار داخل نفس الملف (نفس الباركود بأكثر من صف) — نحتفظ بآخر صف مكرر
+      const dedupedMap = new Map<string, typeof rawParsedItems[0]>()
+      rawParsedItems.forEach((item) => dedupedMap.set(item.barcode, item))
+      const parsedItems = Array.from(dedupedMap.values())
+      const duplicatesInFile = rawParsedItems.length - parsedItems.length
 
       setUploading(true)
       setStatus(`جاري إنشاء التحديث "${batchLabel}"...`)
@@ -421,7 +427,10 @@ export default function AdminPage() {
       if (error) {
         setStatus(`خطأ: ${error.message}`)
       } else {
-        setStatus(`تم حفظ ${parsedItems.length} منتج ضمن "${batchLabel}"`)
+        setStatus(
+          `تم حفظ ${parsedItems.length} منتج ضمن "${batchLabel}"` +
+          (duplicatesInFile > 0 ? ` — تم تجاهل ${duplicatesInFile} صف مكرر بنفس الباركود داخل الملف` : '')
+        )
         setPendingFile(null)
         setBatchLabel('')
         logActivity('رفع تحديث جديد', batchData.id, `${batchLabel} — ${parsedItems.length} منتج`)
