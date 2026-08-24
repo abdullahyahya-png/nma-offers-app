@@ -219,6 +219,10 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    // نفتح نافذة فاضية فوراً (استجابة مباشرة لضغطة المستخدم) عشان المتصفح ما يحظرها،
+    // ونعبيها بالملف بعد ما يخلص التوليد
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+
     setGeneratingQueue(true)
     try {
       await document.fonts.load('900 90px Tajawal')
@@ -237,13 +241,18 @@ export default function PrintPage() {
       if (mode === 'print') {
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
-        window.open(blobUrl as unknown as string, '_blank')
-        setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
+        }
       } else {
         doc.save('ملصقات_مختارة.pdf')
         setStatus(`تم تحميل ${printQueue.length} ملصق بملف واحد`)
       }
     } catch (err: any) {
+      if (printWindow) printWindow.close()
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
       setGeneratingQueue(false)
@@ -259,6 +268,7 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
     setCustomGenerating(true)
     setStatus('جاري تجهيز الملصق المتنوع...')
     try {
@@ -280,13 +290,18 @@ export default function PrintPage() {
       if (mode === 'print') {
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
-        window.open(blobUrl as unknown as string, '_blank')
-        setStatus('تم فتح نافذة الطباعة')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
       } else {
         doc.save(`ملصق_متنوع_${customName.trim()}.pdf`)
         setStatus('تم تحميل الملصق المتنوع بنجاح')
       }
     } catch (err: any) {
+      if (printWindow) printWindow.close()
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
       setCustomGenerating(false)
@@ -298,6 +313,7 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
     setPrintingId(item.id)
     setStatus('جاري تجهيز الملصق بأعلى جودة، لحظات...')
     try {
@@ -312,13 +328,18 @@ export default function PrintPage() {
       if (mode === 'print') {
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
-        window.open(blobUrl as unknown as string, '_blank')
-        setStatus('تم فتح نافذة الطباعة')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
       } else {
         doc.save(`ملصق_${item.barcode}.pdf`)
         setStatus('تم تحميل الملصق بنجاح')
       }
     } catch (err: any) {
+      if (printWindow) printWindow.close()
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
       setPrintingId(null)
