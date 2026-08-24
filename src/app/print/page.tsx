@@ -402,8 +402,7 @@ export default function PrintPage() {
                 ملصق متنوع
               </h2>
               <p className="text-xs text-gray-500 font-medium mb-4">
-                لأي حالة خاصة — منتج مو موجود بالنظام، أو تشكيلة نكهات/أحجام بنفس السعر
-              </p>
+               لأي حالة خاصة — تشكيلة نكهات أو أحجام بنفس السعر
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <input
                   value={customName}
