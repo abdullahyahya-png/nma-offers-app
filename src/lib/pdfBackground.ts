@@ -13,7 +13,7 @@ export async function renderPdfToCanvas(
   targetWidth: number,
   targetHeight: number
 ): Promise<HTMLCanvasElement> {
-  const pdf = await pdfjsLib.getDocument(url).promise
+  const pdf = await pdfjsLib.getDocument({ url }).promise
   const page = await pdf.getPage(1)
   const baseViewport = page.getViewport({ scale: 1 })
   // نكبّر لأكبر بعد مطلوب عشان الجودة تكفي حتى لو الملصق طلع أطول أو أعرض من نسبة الـ PDF
@@ -25,6 +25,6 @@ export async function renderPdfToCanvas(
   canvas.height = viewport.height
   const ctx = canvas.getContext('2d')!
 
-  await page.render({ canvasContext: ctx, viewport }).promise
+  await page.render({ canvas, canvasContext: ctx, viewport }).promise
   return canvas
 }
