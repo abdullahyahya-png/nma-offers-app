@@ -249,6 +249,7 @@ export default function PrintPage() {
       return
     }
     setPrintingId(item.id)
+    setStatus('جاري تجهيز الملصق بأعلى جودة، لحظات...')
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
@@ -262,8 +263,10 @@ export default function PrintPage() {
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
         window.open(blobUrl as unknown as string, '_blank')
+        setStatus('تم فتح نافذة الطباعة')
       } else {
         doc.save(`ملصق_${item.barcode}.pdf`)
+        setStatus('تم تحميل الملصق بنجاح')
       }
     } catch (err: any) {
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
@@ -389,48 +392,56 @@ export default function PrintPage() {
               كل العروض ({filteredItems.length})
             </h2>
           </div>
-          <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[650px] overflow-y-auto">
-            {filteredItems.length === 0 && (
-              <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</p>
-            )}
-            {filteredItems.map((item) => (
-              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
-                <div className="min-w-0">
-                  <p className="font-bold text-[var(--navy)] text-sm truncate">{item.product_name}</p>
-                  <p className="text-xs text-gray-500">
-                    {item.barcode} ·{' '}
-                    <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
-                    <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => addToQueue(item)}
-                    disabled={queueIds.has(item.id)}
-                    className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
-                  >
-                    <ListPlus size={13} />
-                    {queueIds.has(item.id) ? 'مضاف' : 'أضف'}
-                  </button>
-                  <button
-                    onClick={() => handleAction(item, 'download')}
-                    disabled={printingId === item.id}
-                    className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    <Download size={13} />
-                    تحميل
-                  </button>
-                  <button
-                    onClick={() => handleAction(item, 'print')}
-                    disabled={printingId === item.id}
-                    className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    <Printer size={13} />
-                    طباعة
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <div className="max-h-[650px] overflow-y-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                  <tr>
+                    <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
+                    <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                    <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
+                    <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                    <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredItems.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</td>
+                    </tr>
+                  )}
+                  {filteredItems.map((item, i) => (
+                    <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors`}>
+                      <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
+                      <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                      <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                      <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                      <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleAction(item, 'download')}
+                            disabled={printingId === item.id}
+                            className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            <Download size={13} />
+                            تحميل
+                          </button>
+                          <button
+                            onClick={() => handleAction(item, 'print')}
+                            disabled={printingId === item.id}
+                            className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            <Printer size={13} />
+                            طباعة
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
           </div>
         </div>
       </div>
