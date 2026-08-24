@@ -1,17 +1,11 @@
-// نأخر استيراد pdfjs-dist لحد ما الدالة تتنفذ فعلياً بالمتصفح (Client)
-// عشان ما يصطدم بعملية بناء Next.js على السيرفر (اللي ما فيه DOMMatrix أو أي API متصفح)
-let pdfjsLibPromise: Promise<typeof import('pdfjs-dist')> | null = null
+import * as pdfjsLib from 'pdfjs-dist'
 
-async function getPdfjsLib() {
-  if (!pdfjsLibPromise) {
-    pdfjsLibPromise = import('pdfjs-dist').then((lib) => {
-      lib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-      return lib
-    })
-  }
-  return pdfjsLibPromise
-}
+// نجيب ملف الـ Worker من نفس نسخة pdfjs-dist المثبتة بالمشروع (بدل رابط CDN ثابت)
+// عشان نضمن تطابق النسخة دايماً، حتى لو تحدثت المكتبة مستقبلاً
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString()
 
 /**
  * يفتح أول صفحة من ملف PDF ويرسمها على Canvas بجودة تناسب المقاس المطلوب.
@@ -22,7 +16,6 @@ export async function renderPdfToCanvas(
   targetWidth: number,
   targetHeight: number
 ): Promise<HTMLCanvasElement> {
-  const pdfjsLib = await getPdfjsLib()
   const pdf = await pdfjsLib.getDocument({ url }).promise
   const page = await pdf.getPage(1)
   const baseViewport = page.getViewport({ scale: 1 })
