@@ -663,29 +663,51 @@ export default function AdminPage() {
     if (selectedIds.size === 0) return
     askConfirm(`متأكد إنك تبي تحذف ${selectedIds.size} منتج نهائياً؟ هذا الإجراء ما يُرجع.`, async () => {
       const idsArray = Array.from(selectedIds)
-      const { error } = await supabase.from('offer_items').delete().in('id', idsArray)
-      if (error) {
-        setStatus(`خطأ بالحذف الجماعي: ${error.message}`)
-      } else {
-        setItems((prev) => prev.filter((item) => !selectedIds.has(item.id!)))
-        setStatus(`تم حذف ${idsArray.length} منتج بنجاح`)
-        setSelectedIds(new Set())
+      const CHUNK_SIZE = 150 // تفادي خطأ Bad Request بسبب طول الرابط مع عدد كبير من المعرفات
+      let deletedCount = 0
+      let failedChunk = false
+
+      for (let i = 0; i < idsArray.length; i += CHUNK_SIZE) {
+        const chunk = idsArray.slice(i, i + CHUNK_SIZE)
+        const { error } = await supabase.from('offer_items').delete().in('id', chunk)
+        if (error) {
+          setStatus(`خطأ بالحذف الجماعي (بعد حذف ${deletedCount} منتج): ${error.message}`)
+          failedChunk = true
+          break
+        }
+        deletedCount += chunk.length
+      }
+
+      const deletedIds = new Set(idsArray.slice(0, deletedCount))
+      setItems((prev) => prev.filter((item) => !deletedIds.has(item.id!)))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        deletedIds.forEach((id) => next.delete(id))
+        return next
+      })
+
+      if (!failedChunk) {
+        setStatus(`تم حذف ${deletedCount} منتج بنجاح`)
       }
     })
   }
 
   const handleDeleteBatch = async (batch: OfferBatch) => {
     const batchItems = itemsForBatch(batch)
+    const itemsCount = batchItems.length
     askConfirm(
-      `متأكد إنك تبي تحذف تحديث "${batch.label}" بالكامل؟\nبيتم حذف ${batchItems.length} منتج مرتبط فيه نهائياً من كل الفروع، وهذا الإجراء ما يُرجع.`,
+      `متأكد إنك تبي تحذف تحديث "${batch.label}" بالكامل؟\nبيتم حذف ${itemsCount} منتج مرتبط فيه نهائياً من كل الفروع، وهذا الإجراء ما يُرجع.`,
       async () => {
-        const idsToDelete = batchItems.map((i) => i.id!).filter(Boolean)
-        if (idsToDelete.length > 0) {
-          const { error: itemsError } = await supabase.from('offer_items').delete().in('id', idsToDelete)
-          if (itemsError) {
-            setStatus(`خطأ بحذف منتجات التحديث: ${itemsError.message}`)
-            return
-          }
+        // نحذف حسب رقم التحديث نفسه بدل قائمة طويلة من المعرفات (تفادي خطأ Bad Request مع التحديثات الكبيرة)
+        const deleteColumn = batch.batch_type === 'new' ? 'batch_id' : 'cancelled_batch_id'
+        const { error: itemsError } = await supabase
+          .from('offer_items')
+          .delete()
+          .eq(deleteColumn, batch.id)
+
+        if (itemsError) {
+          setStatus(`خطأ بحذف منتجات التحديث: ${itemsError.message}`)
+          return
         }
 
         if (batch.batch_type === 'new') {
@@ -700,7 +722,7 @@ export default function AdminPage() {
           return
         }
 
-        setStatus(`تم حذف تحديث "${batch.label}" وكل منتجاته (${idsToDelete.length}) نهائياً`)
+        setStatus(`تم حذف تحديث "${batch.label}" وكل منتجاته (${itemsCount}) نهائياً`)
         fetchItems()
         fetchBatches()
         fetchConfirmations()
