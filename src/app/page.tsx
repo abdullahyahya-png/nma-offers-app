@@ -15,12 +15,16 @@ import {
   ImagePlus,
   PlusCircle,
   Trash2,
+  Pencil,
+  Check,
+  Search,
   Package,
   TrendingUp,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   XCircle,
+  X,
   History,
   ChevronUp,
   FileCheck,
@@ -162,6 +166,12 @@ export default function AdminPage() {
   const [activationMap, setActivationMap] = useState<Record<string, Set<string>>>({})
   const [removalMap, setRemovalMap] = useState<Record<string, Set<string>>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [tableSearchQuery, setTableSearchQuery] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editPrevPrice, setEditPrevPrice] = useState('')
+  const [editOfferPrice, setEditOfferPrice] = useState('')
+  const [editName, setEditName] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
   const [showFactoryResetModal, setShowFactoryResetModal] = useState(false)
   const [factoryResetInput, setFactoryResetInput] = useState('')
@@ -329,6 +339,12 @@ export default function AdminPage() {
     return items
   }, [tableFilter, items, activeItemsList, cancelledItemsList])
 
+  const searchedItems = useMemo(() => {
+    const q = tableSearchQuery.trim()
+    if (!q) return visibleItems
+    return visibleItems.filter((i) => i.barcode.includes(q) || i.product_name.includes(q))
+  }, [visibleItems, tableSearchQuery])
+
   const avgDiscount = useMemo(() => {
     if (activeItemsList.length === 0) return 0
     const total = activeItemsList.reduce((sum, item) => {
@@ -338,13 +354,13 @@ export default function AdminPage() {
     return Math.round((total / activeItemsList.length) * 100)
   }, [activeItemsList])
 
-  const totalPages = Math.max(1, Math.ceil(visibleItems.length / pageSize))
-  const paginatedItems = visibleItems.slice((page - 1) * pageSize, page * pageSize)
+  const totalPages = Math.max(1, Math.ceil(searchedItems.length / pageSize))
+  const paginatedItems = searchedItems.slice((page - 1) * pageSize, page * pageSize)
 
   useEffect(() => {
     setPage(1)
     setSelectedIds(new Set())
-  }, [pageSize, visibleItems.length, tableFilter])
+  }, [pageSize, visibleItems.length, tableFilter, tableSearchQuery])
 
   const itemsForBatch = (batch: OfferBatch) => {
     return batch.batch_type === 'new'
@@ -573,6 +589,51 @@ export default function AdminPage() {
         setItems((prev) => prev.filter((item) => item.id !== id))
       }
     })
+  }
+
+  const handleStartEdit = (item: OfferItem) => {
+    setEditingId(item.id!)
+    setEditName(item.product_name)
+    setEditPrevPrice(String(item.previous_price))
+    setEditOfferPrice(String(item.offer_price))
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setEditName('')
+    setEditPrevPrice('')
+    setEditOfferPrice('')
+  }
+
+  const handleSaveEdit = async (id: string) => {
+    const name = editName.trim()
+    const prev = Number(editPrevPrice)
+    const offer = Number(editOfferPrice)
+    if (!name) {
+      setStatus('اسم المنتج ما يصير فاضي')
+      return
+    }
+    if (isNaN(prev) || isNaN(offer) || prev < 0 || offer < 0) {
+      setStatus('تأكد إن السعرين أرقام صحيحة')
+      return
+    }
+    setSavingEdit(true)
+    const { error } = await supabase
+      .from('offer_items')
+      .update({ product_name: name, previous_price: prev, offer_price: offer })
+      .eq('id', id)
+    setSavingEdit(false)
+
+    if (error) {
+      setStatus(`خطأ بالتعديل: ${error.message}`)
+    } else {
+      setItems((prevItems) =>
+        prevItems.map((item) => (item.id === id ? { ...item, product_name: name, previous_price: prev, offer_price: offer } : item))
+      )
+      setStatus('تم تعديل المنتج بنجاح')
+      logActivity('تعديل منتج', id)
+      handleCancelEdit()
+    }
   }
 
   const toggleSelectItem = (id: string) => {
@@ -1293,9 +1354,18 @@ export default function AdminPage() {
               <div className="p-4 border-b-2 border-[var(--navy)]/10 flex flex-wrap items-center justify-between gap-3 bg-[var(--navy)]/5">
                 <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
                   <Package size={16} />
-                  جدول المنتجات ({visibleItems.length})
+                  جدول المنتجات ({searchedItems.length})
                 </h2>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="relative">
+                    <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={tableSearchQuery}
+                      onChange={(e) => setTableSearchQuery(e.target.value)}
+                      placeholder="ابحث بالاسم أو الباركود"
+                      className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2 pr-8 text-xs text-[var(--navy)] font-medium w-48 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                    />
+                  </div>
                   {selectedIds.size > 0 && (
                     <button
                       onClick={handleBulkDelete}
@@ -1328,20 +1398,20 @@ export default function AdminPage() {
                 </div>
               </div>
               <div className="overflow-x-auto">
-                {paginatedItems.length > 0 && paginatedItems.every((i) => selectedIds.has(i.id!)) && selectedIds.size < visibleItems.length && (
+                {paginatedItems.length > 0 && paginatedItems.every((i) => selectedIds.has(i.id!)) && selectedIds.size < searchedItems.length && (
                   <div className="p-2.5 bg-[var(--navy)]/5 border-b-2 border-[var(--navy)]/10 text-center text-xs font-bold text-[var(--navy)]">
                     تم تحديد {selectedIds.size} منتج بهذي الصفحة.{' '}
                     <button
-                      onClick={() => setSelectedIds(new Set(visibleItems.map((i) => i.id!).filter(Boolean)))}
+                      onClick={() => setSelectedIds(new Set(searchedItems.map((i) => i.id!).filter(Boolean)))}
                       className="text-[var(--red)] underline hover:no-underline"
                     >
-                      تحديد كل الـ{visibleItems.length} منتج المطابقة للفلتر
+                      تحديد كل الـ{searchedItems.length} منتج المطابقة للفلتر
                     </button>
                   </div>
                 )}
-                {selectedIds.size === visibleItems.length && visibleItems.length > 0 && (
+                {selectedIds.size === searchedItems.length && searchedItems.length > 0 && (
                   <div className="p-2.5 bg-[var(--red)]/5 border-b-2 border-[var(--red)]/20 text-center text-xs font-bold text-[var(--red)]">
-                    تم تحديد كل الـ{visibleItems.length} منتج.{' '}
+                    تم تحديد كل الـ{searchedItems.length} منتج.{' '}
                     <button
                       onClick={() => setSelectedIds(new Set())}
                       className="underline hover:no-underline"
@@ -1376,8 +1446,9 @@ export default function AdminPage() {
                         ? Math.round((1 - item.offer_price / item.previous_price) * 100)
                         : 0
                       const cancelled = item.is_active === false
+                      const isEditing = editingId === item.id
                       return (
-                        <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors ${cancelled ? 'opacity-50' : ''} ${selectedIds.has(item.id!) ? 'bg-[var(--navy)]/10' : ''}`}>
+                        <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors ${cancelled ? 'opacity-50' : ''} ${selectedIds.has(item.id!) ? 'bg-[var(--navy)]/10' : ''} ${isEditing ? 'bg-[var(--yellow)]/10' : ''}`}>
                           <td className="p-3 text-center border-2 border-[var(--navy)]/10">
                             <input
                               type="checkbox"
@@ -1387,9 +1458,41 @@ export default function AdminPage() {
                             />
                           </td>
                           <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
-                          <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
-                          <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
-                          <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                          <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">
+                            {isEditing ? (
+                              <input
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                              />
+                            ) : (
+                              item.product_name
+                            )}
+                          </td>
+                          <td className="p-3 text-gray-500 font-bold border-2 border-[var(--navy)]/10">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                value={editPrevPrice}
+                                onChange={(e) => setEditPrevPrice(e.target.value)}
+                                className="w-24 bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                              />
+                            ) : (
+                              <span className="line-through">{item.previous_price.toFixed(2)}</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                value={editOfferPrice}
+                                onChange={(e) => setEditOfferPrice(e.target.value)}
+                                className="w-24 bg-white border-2 border-[var(--red)]/30 rounded-lg p-1.5 text-sm text-[var(--red)] font-black focus:outline-none focus:ring-2 focus:ring-[var(--red)]/20"
+                              />
+                            ) : (
+                              item.offer_price.toFixed(2)
+                            )}
+                          </td>
                           <td className="p-3 text-center border-2 border-[var(--navy)]/10">
                             <span className={`inline-block text-xs font-bold px-2.5 py-1 rounded-md ${discountBadgeClass(discount)}`}>
                               {discount}%-
@@ -1408,9 +1511,40 @@ export default function AdminPage() {
                             )}
                           </td>
                           <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                            <button onClick={() => handleDelete(item.id!)} className="text-gray-400 hover:text-[var(--red)] transition-colors">
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center justify-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    onClick={() => handleSaveEdit(item.id!)}
+                                    disabled={savingEdit}
+                                    className="text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                    title="حفظ"
+                                  >
+                                    <Check size={16} />
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEdit}
+                                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                                    title="إلغاء"
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleStartEdit(item)}
+                                    className="text-gray-400 hover:text-[var(--navy)] transition-colors"
+                                    title="تعديل السعر"
+                                  >
+                                    <Pencil size={15} />
+                                  </button>
+                                  <button onClick={() => handleDelete(item.id!)} className="text-gray-400 hover:text-[var(--red)] transition-colors" title="حذف">
+                                    <Trash2 size={16} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -1453,7 +1587,7 @@ export default function AdminPage() {
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-600 font-bold">
                   <span>
-                    عرض {(page - 1) * pageSize + 1} - {Math.min(page * pageSize, visibleItems.length)} من {visibleItems.length} منتج
+                    عرض {(page - 1) * pageSize + 1} - {Math.min(page * pageSize, searchedItems.length)} من {searchedItems.length} منتج
                   </span>
                   <select
                     value={pageSize}
