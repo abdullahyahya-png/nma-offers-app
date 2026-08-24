@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'
 import { renderPdfToCanvas } from '../../lib/pdfBackground'
+import InstallPWAButton from '../components/InstallPWAButton'
 import { Search, Printer, Download, Package, ListPlus, Layers, X } from 'lucide-react'
 
 interface OfferItem {
@@ -54,6 +55,11 @@ export default function PrintPage() {
   const [printQueue, setPrintQueue] = useState<OfferItem[]>([])
   const [bulkBarcodesText, setBulkBarcodesText] = useState('')
   const [generatingQueue, setGeneratingQueue] = useState(false)
+  const [customName, setCustomName] = useState('')
+  const [customPrevPrice, setCustomPrevPrice] = useState('')
+  const [customOfferPrice, setCustomOfferPrice] = useState('')
+  const [customNote, setCustomNote] = useState('')
+  const [customGenerating, setCustomGenerating] = useState(false)
   const bgImageRef = useRef<HTMLCanvasElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -243,6 +249,49 @@ export default function PrintPage() {
     }
   }
 
+  const handleCustomLabelAction = async (mode: 'download' | 'print') => {
+    if (!customName.trim() || !customPrevPrice || !customOfferPrice) {
+      setStatus('عبّي اسم المنتج والسعر السابق وسعر العرض أول')
+      return
+    }
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    setCustomGenerating(true)
+    setStatus('جاري تجهيز الملصق المتنوع...')
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const data: LabelData = {
+        name: customName.trim(),
+        offerPriceText: Number(customOfferPrice).toFixed(2),
+        prevPriceText: Number(customPrevPrice).toFixed(2),
+        barcodeText: customNote.trim() || 'عرض خاص',
+      }
+
+      const canvas = await renderLabelCanvas(data)
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+
+      if (mode === 'print') {
+        doc.autoPrint()
+        const blobUrl = doc.output('bloburl')
+        window.open(blobUrl as unknown as string, '_blank')
+        setStatus('تم فتح نافذة الطباعة')
+      } else {
+        doc.save(`ملصق_متنوع_${customName.trim()}.pdf`)
+        setStatus('تم تحميل الملصق المتنوع بنجاح')
+      }
+    } catch (err: any) {
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setCustomGenerating(false)
+    }
+  }
+
   const handleAction = async (item: OfferItem, mode: 'download' | 'print') => {
     if (!bgReady || !bgImageRef.current) {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
@@ -277,6 +326,7 @@ export default function PrintPage() {
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
+      <InstallPWAButton />
       <header className="bg-white border-b-4 border-[var(--navy)]">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
@@ -304,6 +354,63 @@ export default function PrintPage() {
               autoFocus
               className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
             />
+          </div>
+        </div>
+
+        {/* ملصق متنوع (مو مرتبط بباركود بالنظام) */}
+        <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+          <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+            <Layers size={16} />
+            ملصق متنوع
+          </h2>
+          <p className="text-xs text-gray-500 font-medium mb-3">
+            لأي حالة خاصة — منتج مو موجود بالنظام، أو تشكيلة نكهات/أحجام بنفس السعر
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <input
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="اسم/عنوان المنتج"
+              className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+            />
+            <input
+              value={customPrevPrice}
+              onChange={(e) => setCustomPrevPrice(e.target.value)}
+              type="number"
+              placeholder="السعر السابق"
+              className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+            />
+            <input
+              value={customOfferPrice}
+              onChange={(e) => setCustomOfferPrice(e.target.value)}
+              type="number"
+              placeholder="سعر العرض"
+              className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+            />
+            <input
+              value={customNote}
+              onChange={(e) => setCustomNote(e.target.value)}
+              placeholder="ملاحظة مكان الباركود (اختياري)"
+              className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleCustomLabelAction('download')}
+              disabled={customGenerating}
+              className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Download size={13} />
+              تحميل
+            </button>
+            <button
+              onClick={() => handleCustomLabelAction('print')}
+              disabled={customGenerating}
+              className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <Printer size={13} />
+              {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+            </button>
           </div>
         </div>
 
