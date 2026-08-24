@@ -340,10 +340,10 @@ export default function PrintPage() {
 
       <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 flex flex-col md:flex-row gap-4 md:gap-6 items-start">
         <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6">
-          <div className="w-full bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
+          <div className="w-full grid grid-cols-2 md:flex md:flex-col gap-1.5 bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
             <button
               onClick={() => setActiveSection('general')}
-              className={`shrink-0 md:w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'general' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -355,7 +355,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('custom')}
-              className={`shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'custom' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -364,7 +364,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('bulk')}
-              className={`shrink-0 md:w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'bulk' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -373,7 +373,7 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('queue')}
-              className={`shrink-0 md:w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'queue' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -560,7 +560,54 @@ export default function PrintPage() {
                     كل العروض ({filteredItems.length})
                   </h2>
                 </div>
-                <div className="overflow-x-auto">
+
+                {/* عرض بطاقات للجوال (بدل جدول مضغوط) */}
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {filteredItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</p>
+                  )}
+                  {filteredItems.map((item) => (
+                    <div key={item.id} className="p-3.5 space-y-2">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--navy)]">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.barcode} ·{' '}
+                          <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                          <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => addToQueue(item)}
+                          disabled={queueIds.has(item.id)}
+                          className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <ListPlus size={13} />
+                          {queueIds.has(item.id) ? 'مضاف' : 'أضف'}
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'download')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Download size={13} />
+                          تحميل
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'print')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Printer size={13} />
+                          طباعة
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* عرض جدول كامل بالشاشات الأكبر */}
+                <div className="hidden md:block overflow-x-auto">
                   <div className="max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm border-collapse">
                       <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
