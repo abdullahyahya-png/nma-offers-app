@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { renderPdfToCanvas } from '../lib/pdfBackground'
 import WhatsAppNotifySection from './components/WhatsAppNotifySection'
 import BranchAccountsSection from './components/BranchAccountsSection'
 import InstallPWAButton from './components/InstallPWAButton'
@@ -81,7 +82,7 @@ interface ActivityLog {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
-type SectionId = 'stats' | 'upload' | 'label' | 'cancel' | 'history' | 'manual' | 'messages' | 'table' | 'whatsapp' | 'activity' | 'accounts' | 'audit'
+type SectionId = 'stats' | 'upload' | 'label' | 'cancel' | 'history' | 'manual' | 'messages' | 'table' | 'whatsapp' | 'activity' | 'accounts' | 'audit' | 'settings'
 type TableFilter = 'active' | 'all' | 'cancelled'
 
 const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
@@ -160,6 +161,9 @@ export default function AdminPage() {
   const [removalMap, setRemovalMap] = useState<Record<string, Set<string>>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
+  const [showFactoryResetModal, setShowFactoryResetModal] = useState(false)
+  const [factoryResetInput, setFactoryResetInput] = useState('')
+  const [resettingFactory, setResettingFactory] = useState(false)
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm })
@@ -254,13 +258,13 @@ export default function AdminPage() {
   }
 
   const refreshLabelPreview = async () => {
-    const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
+    const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
     const url = `${data.publicUrl}?t=${Date.now()}`
-    const res = await fetch(url, { method: 'HEAD' }).catch(() => null)
-    if (res && res.ok) {
-      setLabelPreviewUrl(url)
+    try {
+      const canvas = await renderPdfToCanvas(url, 600, 1000)
+      setLabelPreviewUrl(canvas.toDataURL('image/png'))
       setLabelExists(true)
-    } else {
+    } catch {
       setLabelPreviewUrl(null)
       setLabelExists(false)
     }
@@ -490,26 +494,26 @@ export default function AdminPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setUploadingBg(true)
-    setStatus('جاري رفع صورة الخلفية...')
+    setStatus('جاري رفع قالب الملصق...')
     const { error: uploadError } = await supabase.storage
       .from('label-assets')
-      .upload('label-bg.png', file, { upsert: true, contentType: file.type })
+      .upload('label-bg.pdf', file, { upsert: true, contentType: 'application/pdf' })
     setUploadingBg(false)
     if (uploadError) {
-      setStatus(`خطأ برفع الصورة: ${uploadError.message}`)
+      setStatus(`خطأ برفع القالب: ${uploadError.message}`)
     } else {
-      setStatus('تم تحديث خلفية الملصق بنجاح')
+      setStatus('تم تحديث قالب الملصق بنجاح')
       refreshLabelPreview()
     }
   }
 
   const handleDeleteBackground = async () => {
-    askConfirm('متأكد إنك تبي تحذف خلفية الملصق الحالية؟ الفروع ما بيقدروا يطبعوا ملصقات لين ترفع وحدة بديلة.', async () => {
-      const { error } = await supabase.storage.from('label-assets').remove(['label-bg.png'])
+    askConfirm('متأكد إنك تبي تحذف قالب الملصق الحالي؟ الفروع ما بيقدروا يطبعوا ملصقات لين ترفع وحدة بديلة.', async () => {
+      const { error } = await supabase.storage.from('label-assets').remove(['label-bg.pdf'])
       if (error) {
         setStatus(`خطأ بالحذف: ${error.message}`)
       } else {
-        setStatus('تم حذف خلفية الملصق')
+        setStatus('تم حذف قالب الملصق')
         refreshLabelPreview()
       }
     })
@@ -628,6 +632,35 @@ export default function AdminPage() {
         fetchConfirmations()
       }
     )
+  }
+
+  const handleFactoryReset = async () => {
+    setResettingFactory(true)
+    try {
+      await supabase.from('offer_items').delete().not('id', 'is', null)
+      await supabase.from('offer_batches').delete().not('id', 'is', null)
+      await supabase.from('branch_batch_confirmations').delete().not('id', 'is', null)
+      await supabase.from('branch_cancel_confirmations').delete().not('id', 'is', null)
+      await supabase.from('branch_barcodes').delete().not('id', 'is', null)
+      await supabase.from('label_checks').delete().not('id', 'is', null)
+      await supabase.from('messages').delete().not('id', 'is', null)
+      await supabase.from('activity_logs').delete().not('id', 'is', null)
+      await supabase.storage.from('label-assets').remove(['label-bg.png', 'label-bg.pdf'])
+
+      setStatus('تمت التهيئة الكاملة بنجاح — النظام رجع فاضي زي أول تشغيل')
+      setFactoryResetInput('')
+      setShowFactoryResetModal(false)
+      fetchItems()
+      fetchBatches()
+      fetchMessages()
+      fetchActivityLogs()
+      fetchConfirmations()
+      refreshLabelPreview()
+    } catch (err: any) {
+      setStatus(`صار خطأ أثناء التهيئة: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setResettingFactory(false)
+    }
   }
 
   const handleSendMessage = async () => {
@@ -778,7 +811,10 @@ export default function AdminPage() {
           </div>
 
           <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
-            <button className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors">
+            <button
+              onClick={() => setActiveSection('settings')}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors"
+            >
               <Settings size={15} />
               إعدادات الحساب
             </button>
@@ -882,20 +918,20 @@ export default function AdminPage() {
           {activeSection === 'label' && (
             <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm max-w-xl">
               <div className="flex items-center justify-between mb-1">
-                <h2 className="font-black text-sm text-[var(--navy)]">ملصق العروض</h2>
+                <h2 className="font-black text-sm text-[var(--navy)]">قالب الملصق</h2>
                 <ImagePlus size={16} className="text-[var(--yellow)]" />
               </div>
-              <p className="text-xs text-gray-600 font-medium mb-4">الصورة اللي تُستخدم كخلفية لكل ملصقات الفروع</p>
+              <p className="text-xs text-gray-600 font-medium mb-4">ملف PDF يُستخدم كقالب خلفية لكل ملصقات الفروع (جودة أعلى من الصور)</p>
 
               <div className="mb-4">
                 <p className="text-xs font-bold text-gray-500 mb-2">المعاينة الحالية</p>
                 {labelExists && labelPreviewUrl ? (
                   <div className="border-2 border-[var(--navy)]/15 rounded-xl overflow-hidden bg-gray-50 flex justify-center p-4">
-                    <img src={labelPreviewUrl} alt="خلفية الملصق الحالية" className="max-h-80 object-contain rounded-lg" />
+                    <img src={labelPreviewUrl} alt="قالب الملصق الحالي" className="max-h-80 object-contain rounded-lg" />
                   </div>
                 ) : (
                   <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center text-gray-400 text-sm font-medium">
-                    لا توجد صورة مرفوعة حالياً
+                    لا يوجد قالب مرفوع حالياً
                   </div>
                 )}
               </div>
@@ -904,9 +940,9 @@ export default function AdminPage() {
                 <label className="flex-1 flex items-center justify-center gap-2 border-2 border-dashed border-[var(--yellow)]/50 rounded-xl p-4 cursor-pointer hover:border-[var(--yellow)] hover:bg-[var(--yellow)]/10 transition-colors">
                   <ImagePlus size={18} className="text-[#8a6300]" />
                   <span className="text-[var(--navy)] font-bold text-sm">
-                    {uploadingBg ? 'جاري الرفع...' : labelExists ? 'استبدال الصورة' : 'رفع صورة جديدة'}
+                    {uploadingBg ? 'جاري الرفع...' : labelExists ? 'استبدال القالب' : 'رفع قالب جديد'}
                   </span>
-                  <input type="file" accept="image/png" onChange={handleUploadBackground} className="hidden" disabled={uploadingBg} />
+                  <input type="file" accept=".pdf,application/pdf" onChange={handleUploadBackground} className="hidden" disabled={uploadingBg} />
                 </label>
                 {labelExists && (
                   <button
@@ -914,11 +950,11 @@ export default function AdminPage() {
                     className="flex items-center justify-center gap-2 bg-white border-2 border-[var(--red)]/30 hover:bg-[var(--red)]/5 text-[var(--red)] px-4 py-2.5 rounded-lg text-sm font-bold transition-colors"
                   >
                     <Trash2 size={15} />
-                    حذف الصورة
+                    حذف القالب
                   </button>
                 )}
               </div>
-              <p className="text-[11px] text-gray-400 font-medium mt-2">صيغة مقبولة: PNG بجودة عالية</p>
+              <p className="text-[11px] text-gray-400 font-medium mt-2">صيغة مقبولة: PDF بجودة عالية (صفحة واحدة تُستخدم)</p>
             </div>
           )}
 
@@ -1176,6 +1212,33 @@ export default function AdminPage() {
 
           {activeSection === 'audit' && <AuditOverviewSection />}
 
+          {activeSection === 'settings' && (
+            <div className="space-y-5 max-w-2xl">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm">
+                <h2 className="font-black text-sm text-[var(--navy)] mb-1">إعدادات الحساب</h2>
+                <p className="text-xs text-gray-500 font-medium">إعدادات عامة للنظام</p>
+              </div>
+
+              <div className="bg-[var(--red)]/5 rounded-2xl border-2 border-[var(--red)]/30 p-6 shadow-sm">
+                <h2 className="font-black text-sm text-[var(--red)] mb-1 flex items-center gap-2">
+                  <XCircle size={16} />
+                  منطقة الخطر
+                </h2>
+                <p className="text-xs text-gray-600 font-medium mb-4">
+                  تهيئة كاملة: يمسح كل المنتجات، التحديثات، الإلغاءات، تأكيدات الفروع، باركودات الفروع، الرسائل، سجل النشاط، بيانات التدقيق، وقالب الملصق — نهائياً بدون رجعة.
+                  <br />
+                  <strong>ما يتأثر:</strong> أسماء الفروع وحساباتها (كلمات السر) تبقى زي ما هي.
+                </p>
+                <button
+                  onClick={() => setShowFactoryResetModal(true)}
+                  className="bg-[var(--red)] hover:bg-[#c11a20] text-white font-black px-6 py-3 rounded-xl transition-colors"
+                >
+                  تهيئة كاملة (حذف كل شي)
+                </button>
+              </div>
+            </div>
+          )}
+
           {activeSection === 'activity' && (
             <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
               <div className="p-4 border-b-2 border-[var(--navy)]/10 flex items-center gap-2 bg-[var(--navy)]/5">
@@ -1413,6 +1476,43 @@ export default function AdminPage() {
               </button>
               <button
                 onClick={() => setConfirmDialog(null)}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold py-2.5 rounded-lg transition-colors"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFactoryResetModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border-4 border-[var(--red)]">
+            <h3 className="text-[var(--red)] font-black text-base mb-2 flex items-center gap-2">
+              <XCircle size={20} />
+              تحذير: تهيئة كاملة
+            </h3>
+            <p className="text-sm text-gray-700 font-medium mb-4 leading-relaxed">
+              هذا الإجراء يمسح كل المنتجات، التحديثات، الإلغاءات، تأكيدات الفروع، باركوداتهم، الرسائل، سجل النشاط، بيانات التدقيق، وقالب الملصق — <strong>نهائياً وبدون رجعة</strong>.
+              <br /><br />
+              اكتب كلمة <strong className="text-[var(--red)]">تهيئة</strong> بالخانة تحت عشان تأكد:
+            </p>
+            <input
+              value={factoryResetInput}
+              onChange={(e) => setFactoryResetInput(e.target.value)}
+              placeholder="اكتب: تهيئة"
+              className="w-full bg-white border-2 border-[var(--red)]/30 rounded-lg p-2.5 text-sm text-[var(--navy)] font-bold mb-4 focus:outline-none focus:ring-2 focus:ring-[var(--red)]/30"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={handleFactoryReset}
+                disabled={factoryResetInput !== 'تهيئة' || resettingFactory}
+                className="flex-1 bg-[var(--red)] hover:bg-[#c11a20] text-white text-sm font-black py-2.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {resettingFactory ? 'جاري التهيئة...' : 'نعم، امسح كل شي'}
+              </button>
+              <button
+                onClick={() => { setShowFactoryResetModal(false); setFactoryResetInput('') }}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold py-2.5 rounded-lg transition-colors"
               >
                 إلغاء

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'
+import { renderPdfToCanvas } from '../../lib/pdfBackground'
 import InstallPWAButton from '../components/InstallPWAButton'
 import {
   Search, UploadCloud, Download, Printer, Package, Sparkles, Bell,
@@ -74,7 +75,7 @@ const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
   { id: 'cancelled', label: 'عروض ملغاة', icon: XCircle },
   { id: 'audit', label: 'تدقيق الملصقات', icon: ClipboardCheck },
   { id: 'custom', label: 'ملصق مخصص', icon: Layers },
-  { id: 'messages', label: 'التواصل مع إدارة العروض', icon: MessageCircle },
+  { id: 'messages', label: 'التواصل مع الإدارة', icon: MessageCircle },
   { id: 'upload', label: 'رفع ملف الفرع', icon: UploadCloud },
   { id: 'search', label: 'بحث بالباركود', icon: Search },
 ]
@@ -188,7 +189,7 @@ export default function BranchPage() {
     return () => clearTimeout(timer)
   }, [status])
   const [generating, setGenerating] = useState(false)
-  const bgImageRef = useRef<HTMLImageElement | null>(null)
+  const bgImageRef = useRef<HTMLCanvasElement | null>(null)
 
   const [searchBarcode, setSearchBarcode] = useState('')
 
@@ -380,13 +381,14 @@ export default function BranchPage() {
   useEffect(() => {
     fetchOffersData()
 
-    const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = `${bgData.publicUrl}?t=${Date.now()}`
-    img.onload = () => {
-      bgImageRef.current = img
-    }
+    const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
+    renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * DEFAULT_SCALE, REF_H * DEFAULT_SCALE)
+      .then((canvas) => {
+        bgImageRef.current = canvas
+      })
+      .catch(() => {
+        bgImageRef.current = null
+      })
 
     // Realtime: أي تغيير على المنتجات أو التحديثات ينعكس فوراً بدون Refresh
     const channel = supabase
