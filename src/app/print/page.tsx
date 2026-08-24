@@ -402,7 +402,8 @@ export default function PrintPage() {
                 ملصق متنوع
               </h2>
               <p className="text-xs text-gray-500 font-medium mb-4">
-               لأي حالة خاصة — تشكيلة نكهات أو أحجام بنفس السعر
+                لأي حالة خاصة — تشكيلة نكهات أو أحجام بنفس السعر
+              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <input
                   value={customName}
@@ -585,6 +586,14 @@ export default function PrintPage() {
                             <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
                             <td className="p-3 text-center border-2 border-[var(--navy)]/10">
                               <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => addToQueue(item)}
+                                  disabled={queueIds.has(item.id)}
+                                  title="أضف لقائمة الطباعة"
+                                  className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
+                                >
+                                  <ListPlus size={13} />
+                                </button>
                                 <button
                                   onClick={() => handleAction(item, 'download')}
                                   disabled={printingId === item.id}
