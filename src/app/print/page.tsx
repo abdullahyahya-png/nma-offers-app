@@ -442,7 +442,6 @@ export default function PrintPage() {
               </table>
             </div>
           </div>
-          </div>
         </div>
       </div>
     </div>
