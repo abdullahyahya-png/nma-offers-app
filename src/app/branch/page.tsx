@@ -3,10 +3,6 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useRef, useState } from 'react'
-// ... باقي الاستيرادات زي ما هي
-'use client'
-
-import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'

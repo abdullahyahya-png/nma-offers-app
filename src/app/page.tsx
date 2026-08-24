@@ -3,10 +3,6 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-// ... باقي الاستيرادات زي ما هي
-'use client'
-
-import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { renderPdfToCanvas } from '../lib/pdfBackground'
