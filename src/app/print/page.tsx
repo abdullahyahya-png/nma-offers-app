@@ -271,14 +271,8 @@ export default function PrintPage() {
     const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
     renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * SCALE, REF_H * SCALE)
       .then((canvas) => {
-        const dataUrl = canvas.toDataURL('image/png')
-        const img = new Image()
-        img.onload = () => {
-          bgImageRef.current = img
-          setBgReady(true)
-        }
-        img.onerror = () => setBgReady(false)
-        img.src = dataUrl
+        bgImageRef.current = canvas
+        setBgReady(true)
       })
       .catch(() => setBgReady(false))
 
