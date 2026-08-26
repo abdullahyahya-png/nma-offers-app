@@ -41,12 +41,27 @@ const RED = '#C00000'
 // يطبّع الباركود: يحل مشكلة الصيغة العلمية (6.28E+12) ويشيل المسافات
 function normalizeBarcode(raw: any): string {
   if (raw === null || raw === undefined) return ''
-  let str = String(raw).trim()
-  if (/^[\d.]+E\+?\d+$/i.test(str)) {
+
+  let str = String(raw)
+    .trim()
+    .replace(/[\s,،]/g, '')
+
+  if (!str) return ''
+
+  // Excel قد يحول الباركود إلى صيغة علمية مثل 6.281E+12
+  if (/^\d+(?:\.\d+)?e[+-]?\d+$/i.test(str)) {
     const num = Number(str)
-    if (!isNaN(num)) str = num.toFixed(0)
+    if (Number.isFinite(num)) {
+      str = num.toFixed(0)
+    }
   }
-  return str.replace(/[\s,]/g, '')
+
+  // وبعض الملفات تعرض الرقم كـ 6281007020001.0
+  if (/^\d+\.0+$/.test(str)) {
+    str = str.replace(/\.0+$/, '')
+  }
+
+  return str
 }
 
 function downloadItemsAsExcel(items: OfferItem[], filename: string) {
@@ -109,19 +124,29 @@ export default function PrintPage() {
   const clearQueue = () => setPrintQueue([])
 
   const handleBulkAdd = () => {
-    const codes = bulkBarcodesText
-      .split(/[\n,\s]+/)
-      .map((c) => c.trim())
-      .filter(Boolean)
+    const codes = Array.from(
+      new Set(
+        bulkBarcodesText
+          .split(/[\n,\s]+/)
+          .map((c) => normalizeBarcode(c))
+          .filter(Boolean)
+      )
+    )
 
     if (codes.length === 0) {
       setStatus('اكتب أو الصق باركودات أول')
       return
     }
 
-    const codeSet = new Set(codes)
-    const matched = allItems.filter((item) => codeSet.has(item.barcode))
-    const matchedBarcodes = new Set(matched.map((m) => m.barcode))
+    const itemMap = new Map(
+      allItems.map((item) => [normalizeBarcode(item.barcode), item] as const)
+    )
+
+    const matched = codes
+      .map((code) => itemMap.get(code))
+      .filter((item): item is OfferItem => Boolean(item))
+
+    const matchedBarcodes = new Set(matched.map((m) => normalizeBarcode(m.barcode)))
     const notFound = codes.filter((c) => !matchedBarcodes.has(c))
 
     setPrintQueue((prev) => {
@@ -142,39 +167,153 @@ export default function PrintPage() {
     if (!file) return
 
     setExcelUploading(true)
+    setExcelMatchedItems([])
+    setExcelUnmatchedBarcodes([])
+    setExcelTotalRead(null)
+
     const reader = new FileReader()
+
     reader.onload = (event) => {
-      const data = event.target?.result
-      const workbook = XLSX.read(data, { type: 'binary' })
-      const sheet = workbook.Sheets[workbook.SheetNames[0]]
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false })
+      try {
+        const data = event.target?.result
+        if (!data) {
+          throw new Error('تعذر قراءة ملف الإكسل')
+        }
 
-      const barcodes = Array.from(new Set(
-        rows.slice(1)
-          .filter((row) => row.length >= 1 && row[0])
-          .map((row) => normalizeBarcode(row[0]))
-          .filter(Boolean)
-      ))
+        // ArrayBuffer أكثر استقراراً من binary string خصوصاً مع الملفات الكبيرة
+        const workbook = XLSX.read(data, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
 
-      setExcelUploading(false)
+        if (!sheet) {
+          throw new Error('لم يتم العثور على أي ورقة داخل الملف')
+        }
 
-      if (barcodes.length === 0) {
-        setStatus('الملف ما فيه أي باركود صالح')
-        return
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          defval: '',
+          raw: false,
+        })
+
+        if (rows.length < 2) {
+          throw new Error('الملف لا يحتوي على بيانات كافية')
+        }
+
+        // نحاول تحديد عمود الباركود من اسم العنوان بدل افتراض أنه العمود الأول.
+        // يدعم: باركود، الباركود، Barcode، EAN، UPC، SKU.
+        const headers = rows[0].map((cell) =>
+          String(cell ?? '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9؀-ۿ]/g, '')
+        )
+
+        const barcodeColumnIndex = headers.findIndex((header) =>
+          [
+            'باركود',
+            'الباركود',
+            'barcode',
+            'ean',
+            'upc',
+            'sku',
+            'كودالصنف',
+            'كودالمنتج',
+          ].some((keyword) => header.includes(keyword))
+        )
+
+        // إذا لم نجد عنوان واضح، نرجع لأول عمود يحتوي على أكبر عدد من قيم تشبه الباركود.
+        let detectedColumn = barcodeColumnIndex
+
+        if (detectedColumn === -1) {
+          const maxColumns = Math.max(...rows.slice(0, 50).map((row) => row.length), 0)
+          let bestColumn = 0
+          let bestScore = -1
+
+          for (let col = 0; col < maxColumns; col++) {
+            let score = 0
+
+            for (const row of rows.slice(1, 101)) {
+              const value = normalizeBarcode(row[col])
+              if (value && /^\d{6,}$/.test(value)) score++
+            }
+
+            if (score > bestScore) {
+              bestScore = score
+              bestColumn = col
+            }
+          }
+
+          detectedColumn = bestColumn
+        }
+
+        const barcodes = Array.from(
+          new Set(
+            rows
+              .slice(1)
+              .map((row) => normalizeBarcode(row[detectedColumn]))
+              .filter(Boolean)
+          )
+        )
+
+        if (barcodes.length === 0) {
+          throw new Error('لم يتم العثور على أي باركود صالح داخل الملف')
+        }
+
+        // تطبيع باركودات قاعدة البيانات أيضاً حتى لا تفشل المطابقة بسبب مسافات
+        // أو صيغة رقمية مختلفة.
+        const itemMap = new Map<string, OfferItem>()
+
+        for (const item of allItems) {
+          const normalized = normalizeBarcode(item.barcode)
+          if (normalized && !itemMap.has(normalized)) {
+            itemMap.set(normalized, item)
+          }
+        }
+
+        // نحافظ على نفس ترتيب الباركودات الموجود في ملف Excel.
+        const matched: OfferItem[] = []
+        const notFound: string[] = []
+
+        for (const barcode of barcodes) {
+          const item = itemMap.get(barcode)
+
+          if (item) {
+            matched.push(item)
+          } else {
+            notFound.push(barcode)
+          }
+        }
+
+        setExcelTotalRead(barcodes.length)
+        setExcelMatchedItems(matched)
+        setExcelUnmatchedBarcodes(notFound)
+
+        const columnName =
+          barcodeColumnIndex !== -1 && rows[0][detectedColumn]
+            ? ` من عمود "${rows[0][detectedColumn]}"`
+            : ''
+
+        setStatus(
+          `تم قراءة ${barcodes.length} باركود${columnName} — ${matched.length} له عرض حالياً` +
+            (notFound.length > 0 ? ` — ${notFound.length} غير مطابق` : '')
+        )
+      } catch (err: any) {
+        setExcelMatchedItems([])
+        setExcelUnmatchedBarcodes([])
+        setExcelTotalRead(null)
+        setStatus(`تعذر قراءة الملف: ${err?.message || 'خطأ غير معروف'}`)
+      } finally {
+        setExcelUploading(false)
+        e.target.value = ''
       }
-
-      const codeSet = new Set(barcodes)
-      const matched = allItems.filter((item) => codeSet.has(item.barcode))
-      const matchedBarcodes = new Set(matched.map((m) => m.barcode))
-      const notFound = barcodes.filter((c) => !matchedBarcodes.has(c))
-
-      setExcelTotalRead(barcodes.length)
-      setExcelMatchedItems(matched)
-      setExcelUnmatchedBarcodes(notFound)
-      setStatus(`تم قراءة ${barcodes.length} باركود — ${matched.length} له عرض حالياً`)
     }
-    reader.readAsBinaryString(file)
-    e.target.value = ''
+
+    reader.onerror = () => {
+      setExcelUploading(false)
+      e.target.value = ''
+      setStatus('حدث خطأ أثناء قراءة ملف الإكسل')
+    }
+
+    reader.readAsArrayBuffer(file)
   }
 
   const handleExcelAction = async (mode: 'download' | 'print') => {
@@ -202,7 +341,7 @@ export default function PrintPage() {
           await new Promise((r) => setTimeout(r, 0))
           const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]), BULK_SCALE, freshBg)
           if (i > 0) doc.addPage([296.28, 496.2])
-          doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+          addCanvasToPdf(doc, canvas)
         }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
@@ -410,6 +549,27 @@ export default function PrintPage() {
     }
   }
 
+  // يضيف الكانفاس إلى PDF بعد تحويله لصورة فعلية.
+  // هذا أكثر استقراراً من تمرير HTMLCanvasElement مباشرة إلى jsPDF عند التوليد الجماعي،
+  // ويمنع الصفحات السوداء أو الفارغة الناتجة عن مشاكل الذاكرة/ضغط PNG.
+  const addCanvasToPdf = (
+    doc: jsPDF,
+    canvas: HTMLCanvasElement
+  ) => {
+    const imageData = canvas.toDataURL('image/jpeg', 0.95)
+
+    doc.addImage(
+      imageData,
+      'JPEG',
+      0,
+      0,
+      296.28,
+      496.2,
+      undefined,
+      'MEDIUM'
+    )
+  }
+
   // ينشئ ملف/ملفات PDF لمجموعة كبيرة من الملصقات، بتجزيء تلقائي لو العدد كبير
   const generateBulkPdfFiles = async (
     items: OfferItem[],
@@ -436,7 +596,7 @@ export default function PrintPage() {
         await new Promise((r) => setTimeout(r, 0))
         const canvas = await renderLabelCanvas(itemToLabelData(chunk[i]), BULK_SCALE, freshBg)
         if (i > 0) doc.addPage([296.28, 496.2])
-        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+        addCanvasToPdf(doc, canvas)
       }
 
       const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
@@ -475,7 +635,7 @@ export default function PrintPage() {
           await new Promise((r) => setTimeout(r, 0))
           const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]), BULK_SCALE, freshBg)
           if (i > 0) doc.addPage([296.28, 496.2])
-          doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+          addCanvasToPdf(doc, canvas)
         }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
@@ -527,7 +687,7 @@ export default function PrintPage() {
 
       const canvas = await renderLabelCanvas(data)
       const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+      addCanvasToPdf(doc, canvas)
 
       if (mode === 'print') {
         doc.autoPrint()
@@ -565,7 +725,7 @@ export default function PrintPage() {
 
       const canvas = await renderLabelCanvas(itemToLabelData(item))
       const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+      addCanvasToPdf(doc, canvas)
 
       if (mode === 'print') {
         doc.autoPrint()
