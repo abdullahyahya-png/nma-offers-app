@@ -93,7 +93,7 @@ export default function PrintPage() {
   const [excelGenerating, setExcelGenerating] = useState(false)
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
-  const bgImageRef = useRef<HTMLCanvasElement | null>(null)
+  const bgImageRef = useRef<HTMLImageElement | HTMLCanvasElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
 
@@ -308,8 +308,16 @@ export default function PrintPage() {
     const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
     renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * SCALE, REF_H * SCALE)
       .then((canvas) => {
-        bgImageRef.current = canvas
-        setBgReady(true)
+        // نحوّل الخلفية لصورة ثابتة مستقرة (بدل لوح رسم مؤقت قد يفقد محتواه بالذاكرة
+        // بعد عمليات توليد كثيرة متتالية) — هذا يمنع مشكلة الملصقات السوداء/الفاضية بالتوليد الجماعي
+        const dataUrl = canvas.toDataURL('image/png')
+        const img = new Image()
+        img.onload = () => {
+          bgImageRef.current = img
+          setBgReady(true)
+        }
+        img.onerror = () => setBgReady(false)
+        img.src = dataUrl
       })
       .catch(() => {
         setBgReady(false)
@@ -332,6 +340,11 @@ export default function PrintPage() {
     canvas.height = REF_H * scale
     const ctx = canvas.getContext('2d')!
     ctx.textBaseline = 'middle'
+
+    // خلفية بيضاء افتراضية أول شي — تضمن الكانفاس ما يفضل شفاف أبداً
+    // (يمنع ظهور صفحات سوداء لو صورة القالب تأخرت أو فشلت لأي سبب)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     if (bgImageRef.current) ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height)
 
