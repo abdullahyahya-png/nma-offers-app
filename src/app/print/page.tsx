@@ -259,6 +259,13 @@ export default function PrintPage() {
     return () => clearTimeout(timer)
   }, [status])
 
+  // البانر الأخضر "الملف جاهز" يقفل تلقائياً لو المستخدم نسى يضغط عليه أو يسكره
+  useEffect(() => {
+    if (readyDownloads.length === 0) return
+    const timer = setTimeout(() => setReadyDownloads([]), 60000)
+    return () => clearTimeout(timer)
+  }, [readyDownloads])
+
   const fetchOffers = async () => {
     const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
     if (data) setAllItems(data.filter((i) => i.is_active !== false))
@@ -723,8 +730,15 @@ export default function PrintPage() {
           )}
 
           {readyDownloads.length > 0 && (
-            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg space-y-2">
-              <p className="text-sm text-emerald-800 font-bold">
+            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg space-y-2 relative">
+              <button
+                onClick={() => setReadyDownloads([])}
+                className="absolute top-3 left-3 text-emerald-700 hover:text-emerald-900"
+                title="إغلاق"
+              >
+                <X size={16} />
+              </button>
+              <p className="text-sm text-emerald-800 font-bold pl-6">
                 ✅ {readyDownloads.length > 1 ? `${readyDownloads.length} ملفات جاهزة` : 'الملف جاهز'} — اضغط للتحميل
               </p>
               <div className="flex flex-wrap items-center gap-2">
