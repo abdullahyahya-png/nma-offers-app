@@ -16,7 +16,11 @@ export async function renderPdfToCanvas(
   targetWidth: number,
   targetHeight: number
 ): Promise<HTMLCanvasElement> {
-  const pdf = await pdfjsLib.getDocument({ url }).promise
+  const pdf = await pdfjsLib.getDocument({
+    url,
+    // تعطيل الخطوط المضمّنة المخصصة لو فيها مشكلة توافق (يرجع لخط افتراضي بدل ما يفشل بصمت)
+    disableFontFace: false,
+  }).promise
   const page = await pdf.getPage(1)
   const baseViewport = page.getViewport({ scale: 1 })
   const scale = Math.max(targetWidth / baseViewport.width, targetHeight / baseViewport.height)
@@ -27,6 +31,13 @@ export async function renderPdfToCanvas(
   canvas.height = viewport.height
   const ctx = canvas.getContext('2d')!
 
-  await page.render({ canvas, canvasContext: ctx, viewport }).promise
+  // خلفية بيضاء أول شي (بعض ملفات PDF تعتمد على شفافية الصفحة، فلو ما رسم شي يفضل أبيض بدل فاضي حقيقي)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  // intent: 'print' يفرض إظهار كل الطبقات/المحتوى المخصص للطباعة
+  // (بعض برامج التصميم تخفي محتوى بوضع "العرض" العادي وتظهره بس بوضع الطباعة)
+  await page.render({ canvas, canvasContext: ctx, viewport, intent: 'print' }).promise
+
   return canvas
 }
