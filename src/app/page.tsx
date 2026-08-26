@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
-import { renderPdfToCanvas } from '../lib/pdfBackground'
 import WhatsAppNotifySection from './components/WhatsAppNotifySection'
 import BranchAccountsSection from './components/BranchAccountsSection'
 import InstallPWAButton from './components/InstallPWAButton'
@@ -239,7 +238,6 @@ export default function AdminPage() {
     if (data) setActivityLogs(data)
   }
 
-  // يسجل عملية إدارية بسجل النشاط
   const logActivity = async (action: string, referenceId?: string, details?: string) => {
     await supabase.from('activity_logs').insert([{
       branch_id: null,
@@ -269,16 +267,20 @@ export default function AdminPage() {
     setRemovalMap(remMap)
   }
 
+  // معاينة قالب الملصق — نتحقق ببساطة إن الصورة فعلاً تفتح (HEAD request) بدون أي مكتبة معقدة
   const refreshLabelPreview = async () => {
-    const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
+    const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
     const url = `${data.publicUrl}?t=${Date.now()}`
-    console.log('محاولة تحميل قالب الملصق من:', url)
     try {
-      const canvas = await renderPdfToCanvas(url, 600, 1000)
-      setLabelPreviewUrl(canvas.toDataURL('image/png'))
-      setLabelExists(true)
-    } catch (err) {
-      console.error('فشل تحميل/رسم قالب الملصق:', err)
+      const res = await fetch(url, { method: 'HEAD' })
+      if (res.ok) {
+        setLabelPreviewUrl(url)
+        setLabelExists(true)
+      } else {
+        setLabelPreviewUrl(null)
+        setLabelExists(false)
+      }
+    } catch {
       setLabelPreviewUrl(null)
       setLabelExists(false)
     }
@@ -293,7 +295,6 @@ export default function AdminPage() {
     fetchActivityLogs()
     refreshLabelPreview()
 
-    // Realtime: الرسائل الجديدة من الفروع وتأكيداتهم تظهر لحظياً بدون Refresh
     const channel = supabase
       .channel('admin-page-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
@@ -315,7 +316,6 @@ export default function AdminPage() {
     }
   }, [])
 
-  // يعلّم رسائل الفروع كمقروءة تلقائياً لما الأدمن يفتح تبويب الرسائل
   useEffect(() => {
     if (activeSection !== 'messages') return
     const unreadIds = messages.filter((m) => m.sender_role === 'branch' && !m.is_read).map((m) => m.id)
@@ -406,7 +406,6 @@ export default function AdminPage() {
           offer_price: Number(row[3]),
         }))
 
-      // نشيل التكرار داخل نفس الملف (نفس الباركود بأكثر من صف) — نحتفظ بآخر صف مكرر
       const dedupedMap = new Map<string, typeof rawParsedItems[0]>()
       rawParsedItems.forEach((item) => dedupedMap.set(item.barcode, item))
       const parsedItems = Array.from(dedupedMap.values())
@@ -519,6 +518,7 @@ export default function AdminPage() {
     reader.readAsBinaryString(pendingCancelFile)
   }
 
+  // رفع قالب الملصق كصورة PNG (بسيط ومضمون التوافق مع كل المتصفحات)
   const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -526,7 +526,7 @@ export default function AdminPage() {
     setStatus('جاري رفع قالب الملصق...')
     const { error: uploadError } = await supabase.storage
       .from('label-assets')
-      .upload('label-bg.pdf', file, { upsert: true, contentType: 'application/pdf' })
+      .upload('label-bg.png', file, { upsert: true, contentType: file.type || 'image/png' })
     setUploadingBg(false)
     if (uploadError) {
       setStatus(`خطأ برفع القالب: ${uploadError.message}`)
@@ -538,7 +538,7 @@ export default function AdminPage() {
 
   const handleDeleteBackground = async () => {
     askConfirm('متأكد إنك تبي تحذف قالب الملصق الحالي؟ الفروع ما بيقدروا يطبعوا ملصقات لين ترفع وحدة بديلة.', async () => {
-      const { error } = await supabase.storage.from('label-assets').remove(['label-bg.pdf'])
+      const { error } = await supabase.storage.from('label-assets').remove(['label-bg.png'])
       if (error) {
         setStatus(`خطأ بالحذف: ${error.message}`)
       } else {
@@ -663,7 +663,7 @@ export default function AdminPage() {
     if (selectedIds.size === 0) return
     askConfirm(`متأكد إنك تبي تحذف ${selectedIds.size} منتج نهائياً؟ هذا الإجراء ما يُرجع.`, async () => {
       const idsArray = Array.from(selectedIds)
-      const CHUNK_SIZE = 150 // تفادي خطأ Bad Request بسبب طول الرابط مع عدد كبير من المعرفات
+      const CHUNK_SIZE = 150
       let deletedCount = 0
       let failedChunk = false
 
@@ -698,7 +698,6 @@ export default function AdminPage() {
     askConfirm(
       `متأكد إنك تبي تحذف تحديث "${batch.label}" بالكامل؟\nبيتم حذف ${itemsCount} منتج مرتبط فيه نهائياً من كل الفروع، وهذا الإجراء ما يُرجع.`,
       async () => {
-        // نحذف حسب رقم التحديث نفسه بدل قائمة طويلة من المعرفات (تفادي خطأ Bad Request مع التحديثات الكبيرة)
         const deleteColumn = batch.batch_type === 'new' ? 'batch_id' : 'cancelled_batch_id'
         const { error: itemsError } = await supabase
           .from('offer_items')
@@ -1017,7 +1016,7 @@ export default function AdminPage() {
                 <h2 className="font-black text-sm text-[var(--navy)]">قالب الملصق</h2>
                 <ImagePlus size={16} className="text-[var(--yellow)]" />
               </div>
-              <p className="text-xs text-gray-600 font-medium mb-4">ملف PDF يُستخدم كقالب خلفية لكل ملصقات الفروع (جودة أعلى من الصور)</p>
+              <p className="text-xs text-gray-600 font-medium mb-4">صورة PNG بجودة عالية تُستخدم كقالب خلفية لكل ملصقات الفروع</p>
 
               <div className="mb-4">
                 <p className="text-xs font-bold text-gray-500 mb-2">المعاينة الحالية</p>
@@ -1038,7 +1037,7 @@ export default function AdminPage() {
                   <span className="text-[var(--navy)] font-bold text-sm">
                     {uploadingBg ? 'جاري الرفع...' : labelExists ? 'استبدال القالب' : 'رفع قالب جديد'}
                   </span>
-                  <input type="file" accept=".pdf,application/pdf" onChange={handleUploadBackground} className="hidden" disabled={uploadingBg} />
+                  <input type="file" accept="image/png,image/jpeg" onChange={handleUploadBackground} className="hidden" disabled={uploadingBg} />
                 </label>
                 {labelExists && (
                   <button
@@ -1050,7 +1049,7 @@ export default function AdminPage() {
                   </button>
                 )}
               </div>
-              <p className="text-[11px] text-gray-400 font-medium mt-2">صيغة مقبولة: PDF بجودة عالية (صفحة واحدة تُستخدم)</p>
+              <p className="text-[11px] text-gray-400 font-medium mt-2">صيغة مقبولة: PNG بجودة عالية</p>
             </div>
           )}
 

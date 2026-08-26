@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'
-import { renderPdfToCanvas } from '../../lib/pdfBackground'
 import InstallPWAButton from '../components/InstallPWAButton'
 import {
   Search, UploadCloud, Download, Printer, Package, Sparkles, Bell,
@@ -128,14 +127,12 @@ export default function BranchPage() {
   const [loggingIn, setLoggingIn] = useState(false)
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [cancelledItems, setCancelledItems] = useState<OfferItem[]>([])
-  // قائمة باركودات الفرع الدائمة — تُطابق أي منتج بأي تحديث (قديم أو جديد) بنفس الباركود
   const [branchBarcodes, setBranchBarcodes] = useState<Set<string>>(new Set())
   const [labelChecks, setLabelChecks] = useState<Record<string, { is_checked: boolean; checked_at: string | null }>>({})
   const [auditLoading, setAuditLoading] = useState(false)
   const [activeSection, setActiveSection] = useState<SectionId>('branch')
   const [status, setStatus] = useState('')
 
-  // يتحقق لو فيه جلسة دخول محفوظة بالمتصفح
   useEffect(() => {
     const saved = localStorage.getItem('branch_session')
     if (saved) {
@@ -191,7 +188,7 @@ export default function BranchPage() {
     return () => clearTimeout(timer)
   }, [status])
   const [generating, setGenerating] = useState(false)
-  const bgImageRef = useRef<HTMLCanvasElement | null>(null)
+  const bgImageRef = useRef<HTMLImageElement | null>(null)
 
   const [searchBarcode, setSearchBarcode] = useState('')
 
@@ -213,12 +210,10 @@ export default function BranchPage() {
   const [newMessageText, setNewMessageText] = useState('')
   const [sendingMessage, setSendingMessage] = useState(false)
 
-  // عروض الفرع المطابقة فعلياً (بالباركود) — تشمل أي تحديث قديم أو جديد بنفس الباركود
   const matchedItems = allItems.filter((item) => branchBarcodes.has(item.barcode))
 
   const auditCheckedCount = matchedItems.filter((item) => labelChecks[item.barcode]?.is_checked).length
 
-  // أول ما يفتح تبويب التدقيق، نجهز صف لكل منتج بالفرع (لو مو موجود) عشان النسبة تحسب صح
   useEffect(() => {
     if (activeSection === 'audit' && selectedBranch && matchedItems.length > 0) {
       const missing = matchedItems.filter((item) => !(item.barcode in labelChecks)).map((item) => item.barcode)
@@ -228,12 +223,10 @@ export default function BranchPage() {
     }
   }, [activeSection, selectedBranch, matchedItems.length])
 
-  // لوحة حالة الفرع: عدد التحديثات والإلغاءات اللي لسا ما اتأكدت + الرسائل
   const pendingUpdatesCount = recentBatches.filter((b) => !confirmedBatchIds.includes(b.id)).length
   const pendingRemovalsCount = recentCancelBatches.filter((b) => !confirmedRemovalIds.includes(b.id)).length
   const unreadMessagesCount = messages.filter((m) => m.sender_role === 'admin' && !m.is_read).length
 
-  // تجميع منتجات الفرع حسب كل تحديث (لعرضها منفصلة بتبويب "عروض الفرع")
   const branchBatchGroups = recentBatches
     .map((batch) => ({
       batch,
@@ -280,7 +273,6 @@ export default function BranchPage() {
     setLabelChecks(map)
   }
 
-  // يجهز صف تدقيق لكل منتج بالفرع أول ما يفتح التبويب (لو مو موجود أصلاً)، عشان النسبة تحسب صح من البداية
   const ensureAuditRows = async (branchId: string, barcodes: string[]) => {
     if (barcodes.length === 0) return
     const rows = barcodes.map((barcode) => ({ branch_id: branchId, barcode }))
@@ -368,7 +360,6 @@ export default function BranchPage() {
     if (cancelBatchesData) setRecentCancelBatches(cancelBatchesData)
   }
 
-  // يسجل أي عملية يسويها الفرع بسجل النشاط (يشوفه الأدمن بتبويب "سجل النشاط")
   const logActivity = async (action: string, referenceId?: string, details?: string) => {
     if (!selectedBranch) return
     await supabase.from('activity_logs').insert([{
@@ -383,16 +374,18 @@ export default function BranchPage() {
   useEffect(() => {
     fetchOffersData()
 
-    const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
-    renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * DEFAULT_SCALE, REF_H * DEFAULT_SCALE)
-      .then((canvas) => {
-        bgImageRef.current = canvas
-      })
-      .catch(() => {
-        bgImageRef.current = null
-      })
+    // خلفية الملصق (PNG بدل PDF — أبسط وأضمن توافقاً مع كل المتصفحات)
+    const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = `${bgData.publicUrl}?t=${Date.now()}`
+    img.onload = () => {
+      bgImageRef.current = img
+    }
+    img.onerror = () => {
+      bgImageRef.current = null
+    }
 
-    // Realtime: أي تغيير على المنتجات أو التحديثات ينعكس فوراً بدون Refresh
     const channel = supabase
       .channel('branch-page-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'offer_items' }, () => {
@@ -427,7 +420,6 @@ export default function BranchPage() {
 
     if (!selectedBranch) return
 
-    // Realtime: الرسائل الجديدة من الإدارة وتأكيدات الفروع تظهر لحظياً
     const channel = supabase
       .channel(`branch-${selectedBranch}-realtime`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
@@ -446,7 +438,6 @@ export default function BranchPage() {
     }
   }, [selectedBranch])
 
-  // يعلّم رسائل الإدارة كمقروءة تلقائياً لما الفرع يفتح تبويب الرسائل
   useEffect(() => {
     if (activeSection !== 'messages' || !selectedBranch) return
     const unreadIds = messages.filter((m) => m.sender_role === 'admin' && !m.is_read).map((m) => m.id)
@@ -503,7 +494,6 @@ export default function BranchPage() {
     downloadItemsAsExcel(batchItems, batch.label)
   }
 
-  // تحميل كل منتجات التحديث بدون فلترة — عشان الفرع يراجعها ويحدد باركودات منتجاته منها
   const handleDownloadFullBatch = (batch: OfferBatch, cancel = false) => {
     const batchItems = cancel
       ? cancelledItems.filter((item) => item.cancelled_batch_id === batch.id)
@@ -523,17 +513,13 @@ export default function BranchPage() {
     downloadItemsAsExcel(allItems, 'قالب_باركودات_العروض')
   }
 
-  // رفع ملف باركودات الفرع — يخزن الباركودات الخام (يشتغل مع أي تحديث حالي أو مستقبلي بنفس الباركود)
-  // يطبّع الباركود: يحل مشكلة الصيغة العلمية (6.28E+12) وفواصل الآلاف ويشيل المسافات
   const normalizeBarcode = (raw: any): string => {
     if (raw === null || raw === undefined) return ''
     let str = String(raw).trim()
-    // لو Excel حوّله لصيغة علمية زي 6.28101E+12
     if (/^[\d.]+E\+?\d+$/i.test(str)) {
       const num = Number(str)
       if (!isNaN(num)) str = num.toFixed(0)
     }
-    // يشيل أي مسافات أو فواصل زايدة
     str = str.replace(/[\s,]/g, '')
     return str
   }
@@ -549,7 +535,6 @@ export default function BranchPage() {
     const reader = new FileReader()
     reader.onload = async (event) => {
       const data = event.target?.result
-      // raw:false يحافظ على تنسيق الخلية الأصلي (يمنع تحويل الباركودات الطويلة لصيغة علمية)
       const workbook = XLSX.read(data, { type: 'binary' })
       const sheetName = workbook.SheetNames[0]
       const sheet = workbook.Sheets[sheetName]
@@ -571,7 +556,6 @@ export default function BranchPage() {
         return
       }
 
-      // تقرير: كم باركود له عرض موجود بالنظام حالياً، وكم مو موجود
       const allBarcodesInSystem = new Set(allItems.map((i) => i.barcode))
       const foundInSystem = uploadedBarcodes.filter((b) => allBarcodesInSystem.has(b))
       const notFoundInSystem = uploadedBarcodes.filter((b) => !allBarcodesInSystem.has(b))
@@ -611,6 +595,9 @@ export default function BranchPage() {
     canvas.height = REF_H * scale
     const ctx = canvas.getContext('2d')!
     ctx.textBaseline = 'middle'
+
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     if (bgImageRef.current) {
       ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height)
@@ -670,8 +657,6 @@ export default function BranchPage() {
     return canvas
   }
 
-  // يولّد ملف PDF واحد بجودة كاملة — يمرر الـ Canvas مباشرة لـ jsPDF (أسرع بكثير من تحويله لنص Base64)
-  // ويفعّل ضغط PDF الداخلي (compress) اللي يقلل حجم الملف النهائي بدون أي فقدان بالجودة المرئية
   const generateLabelsSingleFile = async (items: OfferItem[], filename: string, mode: 'download' | 'print' = 'download') => {
     const validItems = items.filter(
       (item) => item.product_name && item.barcode && !isNaN(item.previous_price) && !isNaN(item.offer_price)
@@ -685,6 +670,7 @@ export default function BranchPage() {
 
     setGenerating(true)
     const scale = DEFAULT_SCALE
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
 
     try {
       await document.fonts.load('900 90px Tajawal')
@@ -698,18 +684,19 @@ export default function BranchPage() {
         await new Promise((r) => setTimeout(r, 0))
         const canvas = await renderLabelCanvas(itemToLabelData(validItems[i]), scale)
         if (i > 0) doc.addPage([296.28, 496.2])
-        // تمرير الـ canvas مباشرة (بدل base64) + ضغط FAST يخلي الحفظ أسرع بكثير مع نفس الدقة
         doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
       }
 
       if (mode === 'print') {
-        setStatus('جاري فتح نافذة الطباعة...')
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
-        window.open(blobUrl as unknown as string, '_blank')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+          return
+        }
       } else {
-        setStatus(`جاري حفظ الملف النهائي (${validItems.length} ملصق)...`)
-        await new Promise((r) => setTimeout(r, 0))
         doc.save(`${filename}.pdf`)
       }
 
@@ -718,6 +705,7 @@ export default function BranchPage() {
         (skippedCount > 0 ? ` — تم تخطي ${skippedCount} منتج بياناته ناقصة` : '')
       )
     } catch (err: any) {
+      if (printWindow) printWindow.close()
       setStatus(`صار خطأ أثناء التوليد: ${err?.message || 'خطأ غير معروف'}`)
     } finally {
       setGenerating(false)
@@ -729,31 +717,18 @@ export default function BranchPage() {
       setStatus('لا توجد منتجات متوفرة بالفرع')
       return
     }
-    if (!bgImageRef.current) {
-      setStatus('جاري تحميل صورة الخلفية، حاول بعد ثانيتين')
-      return
-    }
     await generateLabelsSingleFile(matchedItems, 'ملصقات_العروض', mode)
   }
 
-  // توليد ملصقات لتحديث واحد بس (بس المنتجات المطابقة لفرعك)
   const handleGenerateBatchLabels = async (items: OfferItem[], filename: string, mode: 'download' | 'print' = 'download') => {
     if (items.length === 0) {
       setStatus('لا توجد منتجات تخص فرعك بهذا التحديث')
-      return
-    }
-    if (!bgImageRef.current) {
-      setStatus('جاري تحميل صورة الخلفية، حاول بعد ثانيتين')
       return
     }
     await generateLabelsSingleFile(items, filename, mode)
   }
 
   const handlePrintSingle = async (item: OfferItem) => {
-    if (!bgImageRef.current) {
-      setStatus('جاري تحميل صورة الخلفية، حاول بعد ثانيتين')
-      return
-    }
     await document.fonts.load('900 90px Tajawal')
     await document.fonts.load('700 58px Tajawal')
     await document.fonts.load('700 34px Tajawal')
@@ -767,10 +742,6 @@ export default function BranchPage() {
   const handleGenerateCustomLabel = async () => {
     if (!customName.trim() || !customPrevPrice || !customOfferPrice) {
       setStatus('عبّي اسم المنتج والسعر السابق وسعر العرض أول')
-      return
-    }
-    if (!bgImageRef.current) {
-      setStatus('جاري تحميل صورة الخلفية، حاول بعد ثانيتين')
       return
     }
 
@@ -1605,7 +1576,6 @@ export default function BranchPage() {
                 </div>
               )}
 
-              {/* تبديل بين عرض مقسّم حسب كل تحديث، أو عرض كل منتجات الفرع بقائمة واحدة */}
               <div className="flex items-center gap-2 mb-4">
                 <button
                   onClick={() => setBranchViewMode('grouped')}
@@ -1668,7 +1638,6 @@ export default function BranchPage() {
                 </div>
               )}
 
-              {/* التحديثات مقسّمة كل واحد لحاله حسب باركودات فرعك */}
               {branchViewMode === 'grouped' && (
               <div className="space-y-4">
                 {branchBatchGroups.map(({ batch, items }) => {
