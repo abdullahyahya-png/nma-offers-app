@@ -92,7 +92,7 @@ export default function PrintPage() {
   const [excelTotalRead, setExcelTotalRead] = useState<number | null>(null)
   const [excelGenerating, setExcelGenerating] = useState(false)
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
-  const [readyDownload, setReadyDownload] = useState<{ url: string; filename: string } | null>(null)
+  const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
   const bgImageRef = useRef<HTMLCanvasElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -186,24 +186,28 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    if (mode === 'print' && excelMatchedItems.length > 40) {
+      setStatus('أكثر من 40 ملصق — استخدم "تحميل" بدل الطباعة المباشرة لهذي الكمية (يقسمها لملفات مناسبة تلقائياً)')
+      return
+    }
     const printWindow = mode === 'print' ? window.open('', '_blank') : null
-    setReadyDownload(null)
+    setReadyDownloads([])
     setExcelGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      for (let i = 0; i < excelMatchedItems.length; i++) {
-        setStatus(`جاري توليد الملصق ${i + 1} من ${excelMatchedItems.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
-        const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]))
-        if (i > 0) doc.addPage([296.28, 496.2])
-        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
-      }
-
       if (mode === 'print') {
+        const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+        for (let i = 0; i < excelMatchedItems.length; i++) {
+          setStatus(`جاري توليد الملصق ${i + 1} من ${excelMatchedItems.length}...`)
+          await new Promise((r) => setTimeout(r, 0))
+          const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]), BULK_SCALE)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+          if (i > 0) doc.addPage([296.28, 496.2])
+          doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+        }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
         if (printWindow) {
@@ -213,9 +217,12 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
         }
       } else {
-        const blobUrl = doc.output('bloburl') as unknown as string
-        setReadyDownload({ url: blobUrl, filename: 'ملصقات_الملف_المرفوع.pdf' })
-        setStatus(`جهّزنا ${excelMatchedItems.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
+        const files = await generateBulkPdfFiles(excelMatchedItems, 'ملصقات_الملف_المرفوع', setStatus)
+        setReadyDownloads(files)
+        setStatus(
+          `جهّزنا ${excelMatchedItems.length} ملصق` +
+          (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
+        )
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -253,24 +260,19 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
-    setReadyDownload(null)
+    setReadyDownloads([])
     setDownloadsGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      for (let i = 0; i < allItems.length; i++) {
-        setStatus(`جاري توليد الملصق ${i + 1} من ${allItems.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
-        const canvas = await renderLabelCanvas(itemToLabelData(allItems[i]))
-        if (i > 0) doc.addPage([296.28, 496.2])
-        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
-      }
-      const blobUrl = doc.output('bloburl') as unknown as string
-      setReadyDownload({ url: blobUrl, filename: 'ملصقات_كل_المنتجات.pdf' })
-      setStatus(`جهّزنا ${allItems.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
+      const files = await generateBulkPdfFiles(allItems, 'ملصقات_كل_المنتجات', setStatus)
+      setReadyDownloads(files)
+      setStatus(
+        `جهّزنا ${allItems.length} ملصق` +
+        (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
+      )
     } catch (err: any) {
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
@@ -324,10 +326,10 @@ export default function PrintPage() {
     }
   }, [])
 
-  const renderLabelCanvas = async (data: LabelData): Promise<HTMLCanvasElement> => {
+  const renderLabelCanvas = async (data: LabelData, scale: number = SCALE): Promise<HTMLCanvasElement> => {
     const canvas = document.createElement('canvas')
-    canvas.width = REF_W * SCALE
-    canvas.height = REF_H * SCALE
+    canvas.width = REF_W * scale
+    canvas.height = REF_H * scale
     const ctx = canvas.getContext('2d')!
     ctx.textBaseline = 'middle'
 
@@ -336,11 +338,11 @@ export default function PrintPage() {
     ctx.textAlign = 'center'
     ctx.direction = 'rtl' as any
 
-    ctx.font = `900 ${POS.offerPrice.fontPx * SCALE}px Tajawal`
+    ctx.font = `900 ${POS.offerPrice.fontPx * scale}px Tajawal`
     ctx.fillStyle = NAVY
     ctx.fillText(data.offerPriceText, canvas.width * POS.offerPrice.xFrac, canvas.height * POS.offerPrice.yFrac)
 
-    ctx.font = `700 ${POS.prevPrice.fontPx * SCALE}px Tajawal`
+    ctx.font = `700 ${POS.prevPrice.fontPx * scale}px Tajawal`
     ctx.fillStyle = RED
     const prevX = canvas.width * POS.prevPrice.xFrac
     const prevY = canvas.height * POS.prevPrice.yFrac
@@ -348,12 +350,12 @@ export default function PrintPage() {
     const prevWidth = ctx.measureText(data.prevPriceText).width
     ctx.beginPath()
     ctx.strokeStyle = RED
-    ctx.lineWidth = 3 * SCALE
+    ctx.lineWidth = 3 * scale
     ctx.moveTo(prevX - prevWidth / 2, prevY)
     ctx.lineTo(prevX + prevWidth / 2, prevY)
     ctx.stroke()
 
-    ctx.font = `700 ${POS.name.fontPx * SCALE}px Tajawal`
+    ctx.font = `700 ${POS.name.fontPx * scale}px Tajawal`
     ctx.fillStyle = NAVY
     const maxWidth = canvas.width * 0.82
     const words = data.name.split(' ')
@@ -370,17 +372,58 @@ export default function PrintPage() {
     }
     if (currentLine) lines.push(currentLine)
     const nameLines = lines.slice(0, 2)
-    const lineSpacing = POS.name.lineSpacingPx * SCALE
+    const lineSpacing = POS.name.lineSpacingPx * scale
     const startY = canvas.height * POS.name.yFrac - ((nameLines.length - 1) * lineSpacing) / 2
     nameLines.forEach((line, i) => {
       ctx.fillText(line, canvas.width * POS.name.xFrac, startY + i * lineSpacing)
     })
 
-    ctx.font = `700 ${POS.barcode.fontPx * SCALE}px Tajawal`
+    ctx.font = `700 ${POS.barcode.fontPx * scale}px Tajawal`
     ctx.fillStyle = RED
     ctx.fillText(data.barcodeText, canvas.width * POS.barcode.xFrac, canvas.height * POS.barcode.yFrac)
 
     return canvas
+  }
+
+  // دقة مخفّضة للتوليد الجماعي (عشرات/مئات الملصقات) — لسا واضحة جداً للطباعة (~300 نقطة/إنش)
+  // بس تقلل حجم الملف والذاكرة المستخدمة بشكل كبير، عشان الجهاز ما يعلّق
+  const BULK_SCALE = 2
+
+  // ينشئ ملف/ملفات PDF لمجموعة كبيرة من الملصقات، بتجزيء تلقائي لو العدد كبير
+  const generateBulkPdfFiles = async (
+    items: OfferItem[],
+    baseFilename: string,
+    onProgress: (msg: string) => void
+  ): Promise<{ url: string; filename: string }[]> => {
+    const CHUNK_SIZE = 40
+    const chunks: OfferItem[][] = []
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      chunks.push(items.slice(i, i + CHUNK_SIZE))
+    }
+
+    const results: { url: string; filename: string }[] = []
+
+    for (let c = 0; c < chunks.length; c++) {
+      const chunk = chunks[c]
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+
+      for (let i = 0; i < chunk.length; i++) {
+        const overallIndex = c * CHUNK_SIZE + i + 1
+        onProgress(`جاري توليد الملصق ${overallIndex} من ${items.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
+        const canvas = await renderLabelCanvas(itemToLabelData(chunk[i]), BULK_SCALE)
+        // JPEG بجودة عالية يقلل حجم الملف بشكل كبير مقارنة بـ PNG بدون فرق واضح للعين
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+        if (i > 0) doc.addPage([296.28, 496.2])
+        doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+      }
+
+      const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
+      const blobUrl = doc.output('bloburl') as unknown as string
+      results.push({ url: blobUrl, filename: `${baseFilename}${partSuffix}.pdf` })
+    }
+
+    return results
   }
 
   const handleQueueAction = async (mode: 'download' | 'print') => {
@@ -392,27 +435,31 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    if (mode === 'print' && printQueue.length > 40) {
+      setStatus('أكثر من 40 ملصق — استخدم "تحميل الكل" بدل الطباعة المباشرة لهذي الكمية (يقسمها لملفات مناسبة تلقائياً)')
+      return
+    }
     // نفتح نافذة فاضية فوراً (استجابة مباشرة لضغطة المستخدم) عشان المتصفح ما يحظرها،
     // ونعبيها بالملف بعد ما يخلص التوليد
     const printWindow = mode === 'print' ? window.open('', '_blank') : null
 
-    setReadyDownload(null)
+    setReadyDownloads([])
     setGeneratingQueue(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      for (let i = 0; i < printQueue.length; i++) {
-        setStatus(`جاري توليد الملصق ${i + 1} من ${printQueue.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
-        const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]))
-        if (i > 0) doc.addPage([296.28, 496.2])
-        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
-      }
-
       if (mode === 'print') {
+        const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+        for (let i = 0; i < printQueue.length; i++) {
+          setStatus(`جاري توليد الملصق ${i + 1} من ${printQueue.length}...`)
+          await new Promise((r) => setTimeout(r, 0))
+          const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]), BULK_SCALE)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+          if (i > 0) doc.addPage([296.28, 496.2])
+          doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+        }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
         if (printWindow) {
@@ -422,9 +469,12 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
         }
       } else {
-        const blobUrl = doc.output('bloburl') as unknown as string
-        setReadyDownload({ url: blobUrl, filename: 'ملصقات_مختارة.pdf' })
-        setStatus(`جهّزنا ${printQueue.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
+        const files = await generateBulkPdfFiles(printQueue, 'ملصقات_مختارة', setStatus)
+        setReadyDownloads(files)
+        setStatus(
+          `جهّزنا ${printQueue.length} ملصق` +
+          (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
+        )
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -609,18 +659,29 @@ export default function PrintPage() {
             </div>
           )}
 
-          {readyDownload && (
-            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-emerald-800 font-bold">✅ الملف جاهز — اضغط للتحميل</p>
-              <a
-                href={readyDownload.url}
-                download={readyDownload.filename}
-                onClick={() => setTimeout(() => setReadyDownload(null), 800)}
-                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
-              >
-                <Download size={14} />
-                تحميل الملف الجاهز
-              </a>
+          {readyDownloads.length > 0 && (
+            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg space-y-2">
+              <p className="text-sm text-emerald-800 font-bold">
+                ✅ {readyDownloads.length > 1 ? `${readyDownloads.length} ملفات جاهزة` : 'الملف جاهز'} — اضغط للتحميل
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {readyDownloads.map((d, idx) => (
+                  <a
+                    key={idx}
+                    href={d.url}
+                    download={d.filename}
+                    onClick={() => {
+                      setTimeout(() => {
+                        setReadyDownloads((prev) => prev.filter((_, i) => i !== idx))
+                      }, 800)
+                    }}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    <Download size={14} />
+                    {readyDownloads.length > 1 ? `تحميل الجزء ${idx + 1}` : 'تحميل الملف الجاهز'}
+                  </a>
+                ))}
+              </div>
             </div>
           )}
 
