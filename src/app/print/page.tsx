@@ -593,6 +593,23 @@ export default function PrintPage() {
     }
   }
 
+  // أداة تشخيص مؤقتة: تعرض الرسمة الخام (Canvas) مباشرة كصورة، بدون أي PDF نهائياً
+  // هذا يوضح فوراً هل المشكلة بالرسم نفسه أو بتحويله لملف
+  const handleDebugPreview = async (item: OfferItem) => {
+    setStatus(`bgReady=${bgReady} | bgImageRef=${bgImageRef.current ? 'موجود' : 'فاضي'}`)
+    await document.fonts.load('900 90px Tajawal')
+    await document.fonts.load('700 58px Tajawal')
+    await document.fonts.load('700 34px Tajawal')
+    const canvas = await renderLabelCanvas(itemToLabelData(item))
+    const dataUrl = canvas.toDataURL('image/png')
+    const win = window.open('', '_blank')
+    if (win) {
+      win.document.write(`<img src="${dataUrl}" style="max-width:100%" />`)
+    } else {
+      setStatus('المتصفح منع فتح النافذة — اسمح بالنوافذ المنبثقة')
+    }
+  }
+
   const handleAction = async (item: OfferItem, mode: 'download' | 'print') => {
     if (!bgReady || !bgImageRef.current) {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
@@ -1076,6 +1093,13 @@ export default function PrintPage() {
                             <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
                             <td className="p-3 text-center border-2 border-[var(--navy)]/10">
                               <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleDebugPreview(item)}
+                                  title="تشخيص: عرض الرسمة الخام"
+                                  className="flex items-center gap-1.5 bg-yellow-100 border-2 border-yellow-400 hover:bg-yellow-200 text-yellow-800 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors"
+                                >
+                                  🔍
+                                </button>
                                 <button
                                   onClick={() => addToQueue(item)}
                                   disabled={queueIds.has(item.id)}
