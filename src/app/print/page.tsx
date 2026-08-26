@@ -380,6 +380,24 @@ export default function PrintPage() {
     onProgress?: (msg: string) => void
   ): Promise<jsPDF> => {
     const bg = scale === SCALE ? bgImageRef.current : await fetchFreshBackground(scale)
+
+    // فحص فوري: نتأكد الخلفية نفسها ما تسبب مشكلة "Tainted Canvas" (خطأ أمني معروف
+    // يصير لما صورة بمصدر خارجي تلوّث الكانفاس، ويصير أي تصدير بعدها يفشل بصمت)
+    if (bg) {
+      const testCanvas = document.createElement('canvas')
+      testCanvas.width = 10
+      testCanvas.height = 10
+      const testCtx = testCanvas.getContext('2d')!
+      testCtx.drawImage(bg, 0, 0, 10, 10)
+      try {
+        testCanvas.toDataURL()
+      } catch (taintErr: any) {
+        throw new Error(
+          `مشكلة تلوّث الكانفاس (Tainted Canvas) — الخلفية جاية من مصدر يمنع تصديرها: ${taintErr?.message || taintErr}`
+        )
+      }
+    }
+
     const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
 
     for (let i = 0; i < items.length; i++) {
@@ -387,9 +405,18 @@ export default function PrintPage() {
         onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
         await new Promise((r) => setTimeout(r, 0))
       }
-      const canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
+      let canvas: HTMLCanvasElement
+      try {
+        canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
+      } catch (renderErr: any) {
+        throw new Error(`فشل رسم الملصق رقم ${i + 1} (${items[i].barcode}): ${renderErr?.message || renderErr}`)
+      }
       if (i > 0) doc.addPage()
-      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+      try {
+        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+      } catch (embedErr: any) {
+        throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
+      }
     }
 
     return doc
