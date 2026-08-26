@@ -363,13 +363,17 @@ export default function PrintPage() {
     return canvas
   }
 
-  const fetchFreshBackground = async (scale: number): Promise<HTMLCanvasElement | null> => {
-    try {
-      const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
-      return await renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * scale, REF_H * scale)
-    } catch {
-      return null
-    }
+  // نشتق خلفية مصغّرة من نفس الخلفية الأصلية اللي نجحت فعلاً من أول تحميل للصفحة
+  // (بدل ما نستدعي مكتبة قراءة PDF من جديد كل مرة — تصغير كانفاس عادي، عملية موثوقة 100%)
+  const getScaledBackground = (scale: number): HTMLCanvasElement | HTMLImageElement | null => {
+    if (!bgImageRef.current) return null
+    if (scale === SCALE) return bgImageRef.current
+    const canvas = document.createElement('canvas')
+    canvas.width = REF_W * scale
+    canvas.height = REF_H * scale
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height)
+    return canvas
   }
 
   // دالة توليد وحيدة يستخدمها كل شي (مفرد، متعدد، الكل) — بدون أي تفريع منطق
@@ -379,7 +383,7 @@ export default function PrintPage() {
     scale: number,
     onProgress?: (msg: string) => void
   ): Promise<jsPDF> => {
-    const bg = scale === SCALE ? bgImageRef.current : await fetchFreshBackground(scale)
+    const bg = getScaledBackground(scale)
 
     // فحص فوري: نتأكد الخلفية نفسها ما تسبب مشكلة "Tainted Canvas" (خطأ أمني معروف
     // يصير لما صورة بمصدر خارجي تلوّث الكانفاس، ويصير أي تصدير بعدها يفشل بصمت)
