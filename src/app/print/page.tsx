@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { renderPdfToCanvas } from '../../lib/pdfBackground'
 import InstallPWAButton from '../components/InstallPWAButton'
-import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid } from 'lucide-react'
+import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud } from 'lucide-react'
 
 interface OfferItem {
   id: string
@@ -37,6 +38,30 @@ const POS = {
 const NAVY = '#150971'
 const RED = '#C00000'
 
+// يطبّع الباركود: يحل مشكلة الصيغة العلمية (6.28E+12) ويشيل المسافات
+function normalizeBarcode(raw: any): string {
+  if (raw === null || raw === undefined) return ''
+  let str = String(raw).trim()
+  if (/^[\d.]+E\+?\d+$/i.test(str)) {
+    const num = Number(str)
+    if (!isNaN(num)) str = num.toFixed(0)
+  }
+  return str.replace(/[\s,]/g, '')
+}
+
+function downloadItemsAsExcel(items: OfferItem[], filename: string) {
+  const rows = items.map((item) => ({
+    الباركود: item.barcode,
+    'اسم المنتج': item.product_name,
+    'السعر السابق': item.previous_price,
+    'سعر العرض': item.offer_price,
+  }))
+  const worksheet = XLSX.utils.json_to_sheet(rows)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'العروض')
+  XLSX.writeFile(workbook, `${filename}.xlsx`)
+}
+
 function itemToLabelData(item: OfferItem): LabelData {
   return {
     name: item.product_name,
@@ -47,7 +72,7 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'queue'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'excel' | 'downloads' | 'queue'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [status, setStatus] = useState('')
@@ -61,6 +86,12 @@ export default function PrintPage() {
   const [customOfferPrice, setCustomOfferPrice] = useState('')
   const [customNote, setCustomNote] = useState('')
   const [customGenerating, setCustomGenerating] = useState(false)
+  const [excelUploading, setExcelUploading] = useState(false)
+  const [excelMatchedItems, setExcelMatchedItems] = useState<OfferItem[]>([])
+  const [excelUnmatchedBarcodes, setExcelUnmatchedBarcodes] = useState<string[]>([])
+  const [excelTotalRead, setExcelTotalRead] = useState<number | null>(null)
+  const [excelGenerating, setExcelGenerating] = useState(false)
+  const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const bgImageRef = useRef<HTMLCanvasElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -103,6 +134,143 @@ export default function PrintPage() {
       `تمت إضافة ${matched.length} منتج لقائمة الطباعة` +
       (notFound.length > 0 ? ` — ${notFound.length} باركود ما تم لقاه بالعروض الحالية` : '')
     )
+  }
+
+  const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setExcelUploading(true)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const data = event.target?.result
+      const workbook = XLSX.read(data, { type: 'binary' })
+      const sheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false })
+
+      const barcodes = Array.from(new Set(
+        rows.slice(1)
+          .filter((row) => row.length >= 1 && row[0])
+          .map((row) => normalizeBarcode(row[0]))
+          .filter(Boolean)
+      ))
+
+      setExcelUploading(false)
+
+      if (barcodes.length === 0) {
+        setStatus('الملف ما فيه أي باركود صالح')
+        return
+      }
+
+      const codeSet = new Set(barcodes)
+      const matched = allItems.filter((item) => codeSet.has(item.barcode))
+      const matchedBarcodes = new Set(matched.map((m) => m.barcode))
+      const notFound = barcodes.filter((c) => !matchedBarcodes.has(c))
+
+      setExcelTotalRead(barcodes.length)
+      setExcelMatchedItems(matched)
+      setExcelUnmatchedBarcodes(notFound)
+      setStatus(`تم قراءة ${barcodes.length} باركود — ${matched.length} له عرض حالياً`)
+    }
+    reader.readAsBinaryString(file)
+    e.target.value = ''
+  }
+
+  const handleExcelAction = async (mode: 'download' | 'print') => {
+    if (excelMatchedItems.length === 0) {
+      setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
+      return
+    }
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setExcelGenerating(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+      for (let i = 0; i < excelMatchedItems.length; i++) {
+        setStatus(`جاري توليد الملصق ${i + 1} من ${excelMatchedItems.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
+        const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]))
+        if (i > 0) doc.addPage([296.28, 496.2])
+        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+      }
+
+      if (mode === 'print') {
+        doc.autoPrint()
+        const blobUrl = doc.output('bloburl')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
+      } else {
+        doc.save('ملصقات_الملف_المرفوع.pdf')
+        setStatus(`تم تحميل ${excelMatchedItems.length} ملصق بملف واحد`)
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setExcelGenerating(false)
+    }
+  }
+
+  const handleAddExcelResultsToQueue = () => {
+    if (excelMatchedItems.length === 0) return
+    setPrintQueue((prev) => {
+      const existingIds = new Set(prev.map((i) => i.id))
+      const newOnes = excelMatchedItems.filter((m) => !existingIds.has(m.id))
+      return [...prev, ...newOnes]
+    })
+    setStatus(`تمت إضافة ${excelMatchedItems.length} منتج لقائمة الطباعة`)
+  }
+
+  const handleDownloadAllExcel = () => {
+    if (allItems.length === 0) {
+      setStatus('لا توجد عروض حالياً')
+      return
+    }
+    downloadItemsAsExcel(allItems, 'كل_العروض')
+    setStatus(`تم تحميل ملف إكسل فيه ${allItems.length} منتج`)
+  }
+
+  const handleDownloadAllLabels = async () => {
+    if (allItems.length === 0) {
+      setStatus('لا توجد عروض حالياً')
+      return
+    }
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    setDownloadsGenerating(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
+      for (let i = 0; i < allItems.length; i++) {
+        setStatus(`جاري توليد الملصق ${i + 1} من ${allItems.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
+        const canvas = await renderLabelCanvas(itemToLabelData(allItems[i]))
+        if (i > 0) doc.addPage([296.28, 496.2])
+        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
+      }
+      doc.save('ملصقات_كل_المنتجات.pdf')
+      setStatus(`تم تحميل ${allItems.length} ملصق بملف واحد`)
+    } catch (err: any) {
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setDownloadsGenerating(false)
+    }
   }
 
   const filteredItems = searchText.trim().length >= 1
@@ -393,6 +561,24 @@ export default function PrintPage() {
               إضافة عدة باركودات
             </button>
             <button
+              onClick={() => setActiveSection('excel')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'excel' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <UploadCloud size={15} />
+              رفع ملف إكسل
+            </button>
+            <button
+              onClick={() => setActiveSection('downloads')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'downloads' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Download size={15} />
+              التنزيلات
+            </button>
+            <button
               onClick={() => setActiveSection('queue')}
               className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'queue' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
@@ -498,6 +684,109 @@ export default function PrintPage() {
                 <ListPlus size={13} />
                 أضف هذي الباركودات لقائمة الطباعة
               </button>
+            </div>
+          )}
+
+          {activeSection === 'excel' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+                <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                  <UploadCloud size={16} />
+                  رفع ملف إكسل باركودات
+                </h2>
+                <p className="text-xs text-gray-500 font-medium mb-4">
+                  ارفع أي ملف Excel فيه عمود باركودات (أي فرع أو أي مصدر)، ونطابقها تلقائياً مع العروض الحالية
+                </p>
+                <label className="flex items-center justify-center gap-2 border-2 border-dashed border-[var(--navy)]/25 rounded-xl p-6 cursor-pointer hover:border-[var(--navy)] hover:bg-[var(--navy)]/5 transition-colors">
+                  <UploadCloud size={20} className="text-[var(--navy)]" />
+                  <span className="text-[var(--navy)] font-bold text-sm">
+                    {excelUploading ? 'جاري القراءة...' : 'اختر ملف Excel'}
+                  </span>
+                  <input type="file" accept=".xlsx,.xls" onChange={handleExcelFileUpload} className="hidden" disabled={excelUploading} />
+                </label>
+              </div>
+
+              {excelTotalRead !== null && (
+                <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm max-w-xl">
+                  <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                    <h3 className="text-sm font-black text-[var(--navy)]">نتيجة المطابقة</h3>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-gray-500 text-xs font-bold">إجمالي الباركودات بالملف</p>
+                      <p className="text-[var(--navy)] font-black text-lg">{excelTotalRead}</p>
+                    </div>
+                    <div className="bg-emerald-50 rounded-lg p-3">
+                      <p className="text-emerald-700 text-xs font-bold">له عرض حالياً</p>
+                      <p className="text-emerald-700 font-black text-lg">{excelMatchedItems.length}</p>
+                    </div>
+                    <div className="bg-[var(--red)]/5 rounded-lg p-3 col-span-2">
+                      <p className="text-[var(--red)] text-xs font-bold">ما تم لقاه بالعروض الحالية</p>
+                      <p className="text-[var(--red)] font-black text-lg">{excelUnmatchedBarcodes.length}</p>
+                    </div>
+                  </div>
+                  {excelMatchedItems.length > 0 && (
+                    <div className="p-4 pt-0 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleExcelAction('download')}
+                        disabled={excelGenerating}
+                        className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Download size={13} />
+                        تحميل ملصقات المطابقة
+                      </button>
+                      <button
+                        onClick={() => handleExcelAction('print')}
+                        disabled={excelGenerating}
+                        className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Printer size={13} />
+                        {excelGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+                      </button>
+                      <button
+                        onClick={handleAddExcelResultsToQueue}
+                        className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-4 py-2 rounded-lg transition-colors"
+                      >
+                        <ListPlus size={13} />
+                        أضف لقائمة الطباعة
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'downloads' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                <Download size={16} />
+                التنزيلات
+              </h2>
+              <p className="text-xs text-gray-500 font-medium mb-4">
+                تحميل بيانات أو ملصقات كل المنتجات دفعة وحدة
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  onClick={handleDownloadAllExcel}
+                  className="flex flex-col items-center gap-2 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] rounded-xl p-5 transition-colors"
+                >
+                  <Package size={24} />
+                  <span className="text-sm font-bold">تحميل إكسل كل المنتجات</span>
+                  <span className="text-[11px] text-gray-500">({allItems.length} منتج بكل تفاصيلها)</span>
+                </button>
+                <button
+                  onClick={handleDownloadAllLabels}
+                  disabled={downloadsGenerating}
+                  className="flex flex-col items-center gap-2 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] rounded-xl p-5 transition-colors disabled:opacity-50"
+                >
+                  <Printer size={24} />
+                  <span className="text-sm font-bold">
+                    {downloadsGenerating ? 'جاري التوليد...' : 'تحميل ملصقات كل المنتجات'}
+                  </span>
+                  <span className="text-[11px] text-gray-500">(ملف PDF واحد، قد يستغرق وقت)</span>
+                </button>
+              </div>
             </div>
           )}
 
