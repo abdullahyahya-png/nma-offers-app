@@ -182,10 +182,6 @@ export default function PrintPage() {
       setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
       return
     }
-    if (!bgReady || !bgImageRef.current) {
-      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
-      return
-    }
     if (mode === 'print' && excelMatchedItems.length > 40) {
       setStatus('أكثر من 40 ملصق — استخدم "تحميل" بدل الطباعة المباشرة لهذي الكمية (يقسمها لملفات مناسبة تلقائياً)')
       return
@@ -199,14 +195,14 @@ export default function PrintPage() {
       await document.fonts.load('700 34px Tajawal')
 
       if (mode === 'print') {
+        const freshBg = await fetchFreshBackground()
         const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
         for (let i = 0; i < excelMatchedItems.length; i++) {
           setStatus(`جاري توليد الملصق ${i + 1} من ${excelMatchedItems.length}...`)
           await new Promise((r) => setTimeout(r, 0))
-          const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]), BULK_SCALE)
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+          const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]), BULK_SCALE, freshBg)
           if (i > 0) doc.addPage([296.28, 496.2])
-          doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+          doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
         }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
@@ -254,10 +250,6 @@ export default function PrintPage() {
   const handleDownloadAllLabels = async () => {
     if (allItems.length === 0) {
       setStatus('لا توجد عروض حالياً')
-      return
-    }
-    if (!bgReady || !bgImageRef.current) {
-      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
     setReadyDownloads([])
@@ -334,7 +326,11 @@ export default function PrintPage() {
     }
   }, [])
 
-  const renderLabelCanvas = async (data: LabelData, scale: number = SCALE): Promise<HTMLCanvasElement> => {
+  const renderLabelCanvas = async (
+    data: LabelData,
+    scale: number = SCALE,
+    bgOverride?: HTMLImageElement | HTMLCanvasElement | null
+  ): Promise<HTMLCanvasElement> => {
     const canvas = document.createElement('canvas')
     canvas.width = REF_W * scale
     canvas.height = REF_H * scale
@@ -342,11 +338,11 @@ export default function PrintPage() {
     ctx.textBaseline = 'middle'
 
     // خلفية بيضاء افتراضية أول شي — تضمن الكانفاس ما يفضل شفاف أبداً
-    // (يمنع ظهور صفحات سوداء لو صورة القالب تأخرت أو فشلت لأي سبب)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    if (bgImageRef.current) ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height)
+    const bg = bgOverride !== undefined ? bgOverride : bgImageRef.current
+    if (bg) ctx.drawImage(bg, 0, 0, canvas.width, canvas.height)
 
     ctx.textAlign = 'center'
     ctx.direction = 'rtl' as any
@@ -402,12 +398,26 @@ export default function PrintPage() {
   // بس تقلل حجم الملف والذاكرة المستخدمة بشكل كبير، عشان الجهاز ما يعلّق
   const BULK_SCALE = 2
 
+  // يجيب نسخة جديدة تماماً من خلفية القالب، محلية بس لهذي العملية —
+  // بدون أي اعتماد على أي نسخة محفوظة سابقاً بالذاكرة (يمنع مشكلة الخلفية اللي تضيع)
+  const fetchFreshBackground = async (): Promise<HTMLCanvasElement | null> => {
+    try {
+      const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
+      const canvas = await renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * BULK_SCALE, REF_H * BULK_SCALE)
+      return canvas
+    } catch {
+      return null
+    }
+  }
+
   // ينشئ ملف/ملفات PDF لمجموعة كبيرة من الملصقات، بتجزيء تلقائي لو العدد كبير
   const generateBulkPdfFiles = async (
     items: OfferItem[],
     baseFilename: string,
     onProgress: (msg: string) => void
   ): Promise<{ url: string; filename: string }[]> => {
+    const freshBg = await fetchFreshBackground()
+
     const CHUNK_SIZE = 40
     const chunks: OfferItem[][] = []
     for (let i = 0; i < items.length; i += CHUNK_SIZE) {
@@ -424,11 +434,9 @@ export default function PrintPage() {
         const overallIndex = c * CHUNK_SIZE + i + 1
         onProgress(`جاري توليد الملصق ${overallIndex} من ${items.length}...`)
         await new Promise((r) => setTimeout(r, 0))
-        const canvas = await renderLabelCanvas(itemToLabelData(chunk[i]), BULK_SCALE)
-        // JPEG بجودة عالية يقلل حجم الملف بشكل كبير مقارنة بـ PNG بدون فرق واضح للعين
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+        const canvas = await renderLabelCanvas(itemToLabelData(chunk[i]), BULK_SCALE, freshBg)
         if (i > 0) doc.addPage([296.28, 496.2])
-        doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
       }
 
       const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
@@ -442,10 +450,6 @@ export default function PrintPage() {
   const handleQueueAction = async (mode: 'download' | 'print') => {
     if (printQueue.length === 0) {
       setStatus('قائمة الطباعة فاضية — أضف منتجات أول')
-      return
-    }
-    if (!bgReady || !bgImageRef.current) {
-      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
     if (mode === 'print' && printQueue.length > 40) {
@@ -464,14 +468,14 @@ export default function PrintPage() {
       await document.fonts.load('700 34px Tajawal')
 
       if (mode === 'print') {
+        const freshBg = await fetchFreshBackground()
         const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
         for (let i = 0; i < printQueue.length; i++) {
           setStatus(`جاري توليد الملصق ${i + 1} من ${printQueue.length}...`)
           await new Promise((r) => setTimeout(r, 0))
-          const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]), BULK_SCALE)
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+          const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]), BULK_SCALE, freshBg)
           if (i > 0) doc.addPage([296.28, 496.2])
-          doc.addImage(dataUrl, 'JPEG', 0, 0, 296.28, 496.2)
+          doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
         }
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
