@@ -92,6 +92,7 @@ export default function PrintPage() {
   const [excelTotalRead, setExcelTotalRead] = useState<number | null>(null)
   const [excelGenerating, setExcelGenerating] = useState(false)
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
+  const [readyDownload, setReadyDownload] = useState<{ url: string; filename: string } | null>(null)
   const bgImageRef = useRef<HTMLCanvasElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -186,6 +187,7 @@ export default function PrintPage() {
       return
     }
     const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setReadyDownload(null)
     setExcelGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
@@ -211,8 +213,9 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
         }
       } else {
-        doc.save('ملصقات_الملف_المرفوع.pdf')
-        setStatus(`تم تحميل ${excelMatchedItems.length} ملصق بملف واحد`)
+        const blobUrl = doc.output('bloburl') as unknown as string
+        setReadyDownload({ url: blobUrl, filename: 'ملصقات_الملف_المرفوع.pdf' })
+        setStatus(`جهّزنا ${excelMatchedItems.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -250,6 +253,7 @@ export default function PrintPage() {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
       return
     }
+    setReadyDownload(null)
     setDownloadsGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
@@ -264,8 +268,9 @@ export default function PrintPage() {
         if (i > 0) doc.addPage([296.28, 496.2])
         doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2, undefined, 'FAST')
       }
-      doc.save('ملصقات_كل_المنتجات.pdf')
-      setStatus(`تم تحميل ${allItems.length} ملصق بملف واحد`)
+      const blobUrl = doc.output('bloburl') as unknown as string
+      setReadyDownload({ url: blobUrl, filename: 'ملصقات_كل_المنتجات.pdf' })
+      setStatus(`جهّزنا ${allItems.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
     } catch (err: any) {
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
@@ -391,6 +396,7 @@ export default function PrintPage() {
     // ونعبيها بالملف بعد ما يخلص التوليد
     const printWindow = mode === 'print' ? window.open('', '_blank') : null
 
+    setReadyDownload(null)
     setGeneratingQueue(true)
     try {
       await document.fonts.load('900 90px Tajawal')
@@ -416,8 +422,9 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
         }
       } else {
-        doc.save('ملصقات_مختارة.pdf')
-        setStatus(`تم تحميل ${printQueue.length} ملصق بملف واحد`)
+        const blobUrl = doc.output('bloburl') as unknown as string
+        setReadyDownload({ url: blobUrl, filename: 'ملصقات_مختارة.pdf' })
+        setStatus(`جهّزنا ${printQueue.length} ملصق — اضغط زر "تحميل الملف الجاهز" تحت`)
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -599,6 +606,21 @@ export default function PrintPage() {
           {status && (
             <div className="p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
               {status}
+            </div>
+          )}
+
+          {readyDownload && (
+            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-emerald-800 font-bold">✅ الملف جاهز — اضغط للتحميل</p>
+              <a
+                href={readyDownload.url}
+                download={readyDownload.filename}
+                onClick={() => setTimeout(() => setReadyDownload(null), 800)}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+              >
+                <Download size={14} />
+                تحميل الملف الجاهز
+              </a>
             </div>
           )}
 
