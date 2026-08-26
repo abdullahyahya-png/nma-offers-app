@@ -27,6 +27,8 @@ interface LabelData {
 const REF_W = 618
 const REF_H = 1034
 const SCALE = 4
+// دقة مخفّضة للتوليد الجماعي (عشرات/مئات الملصقات) — لسا واضحة جداً للطباعة (~300 نقطة/إنش)
+const BULK_SCALE = 2
 
 const POS = {
   offerPrice: { xFrac: 0.45, yFrac: 545 / REF_H, fontPx: 90 },
@@ -38,29 +40,15 @@ const POS = {
 const NAVY = '#150971'
 const RED = '#C00000'
 
-// يطبّع الباركود: يحل مشكلة الصيغة العلمية (6.28E+12) ويشيل المسافات
 function normalizeBarcode(raw: any): string {
   if (raw === null || raw === undefined) return ''
-
-  let str = String(raw)
-    .trim()
-    .replace(/[\s,،]/g, '')
-
+  let str = String(raw).trim().replace(/[\s,،]/g, '')
   if (!str) return ''
-
-  // Excel قد يحول الباركود إلى صيغة علمية مثل 6.281E+12
   if (/^\d+(?:\.\d+)?e[+-]?\d+$/i.test(str)) {
     const num = Number(str)
-    if (Number.isFinite(num)) {
-      str = num.toFixed(0)
-    }
+    if (Number.isFinite(num)) str = num.toFixed(0)
   }
-
-  // وبعض الملفات تعرض الرقم كـ 6281007020001.0
-  if (/^\d+\.0+$/.test(str)) {
-    str = str.replace(/\.0+$/, '')
-  }
-
+  if (/^\d+\.0+$/.test(str)) str = str.replace(/\.0+$/, '')
   return str
 }
 
@@ -125,27 +113,14 @@ export default function PrintPage() {
 
   const handleBulkAdd = () => {
     const codes = Array.from(
-      new Set(
-        bulkBarcodesText
-          .split(/[\n,\s]+/)
-          .map((c) => normalizeBarcode(c))
-          .filter(Boolean)
-      )
+      new Set(bulkBarcodesText.split(/[\n,\s]+/).map((c) => normalizeBarcode(c)).filter(Boolean))
     )
-
     if (codes.length === 0) {
       setStatus('اكتب أو الصق باركودات أول')
       return
     }
-
-    const itemMap = new Map(
-      allItems.map((item) => [normalizeBarcode(item.barcode), item] as const)
-    )
-
-    const matched = codes
-      .map((code) => itemMap.get(code))
-      .filter((item): item is OfferItem => Boolean(item))
-
+    const itemMap = new Map(allItems.map((item) => [normalizeBarcode(item.barcode), item] as const))
+    const matched = codes.map((code) => itemMap.get(code)).filter((item): item is OfferItem => Boolean(item))
     const matchedBarcodes = new Set(matched.map((m) => normalizeBarcode(m.barcode)))
     const notFound = codes.filter((c) => !matchedBarcodes.has(c))
 
@@ -172,129 +147,71 @@ export default function PrintPage() {
     setExcelTotalRead(null)
 
     const reader = new FileReader()
-
     reader.onload = (event) => {
       try {
         const data = event.target?.result
-        if (!data) {
-          throw new Error('تعذر قراءة ملف الإكسل')
-        }
+        if (!data) throw new Error('تعذر قراءة ملف الإكسل')
 
-        // ArrayBuffer أكثر استقراراً من binary string خصوصاً مع الملفات الكبيرة
         const workbook = XLSX.read(data, { type: 'array' })
         const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        if (!sheet) throw new Error('لم يتم العثور على أي ورقة داخل الملف')
 
-        if (!sheet) {
-          throw new Error('لم يتم العثور على أي ورقة داخل الملف')
-        }
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
+        if (rows.length < 2) throw new Error('الملف لا يحتوي على بيانات كافية')
 
-        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, {
-          header: 1,
-          defval: '',
-          raw: false,
-        })
-
-        if (rows.length < 2) {
-          throw new Error('الملف لا يحتوي على بيانات كافية')
-        }
-
-        // نحاول تحديد عمود الباركود من اسم العنوان بدل افتراض أنه العمود الأول.
-        // يدعم: باركود، الباركود، Barcode، EAN، UPC، SKU.
         const headers = rows[0].map((cell) =>
-          String(cell ?? '')
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9؀-ۿ]/g, '')
+          String(cell ?? '').trim().toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, '')
         )
-
         const barcodeColumnIndex = headers.findIndex((header) =>
-          [
-            'باركود',
-            'الباركود',
-            'barcode',
-            'ean',
-            'upc',
-            'sku',
-            'كودالصنف',
-            'كودالمنتج',
-          ].some((keyword) => header.includes(keyword))
+          ['باركود', 'الباركود', 'barcode', 'ean', 'upc', 'sku', 'كودالصنف', 'كودالمنتج'].some((k) => header.includes(k))
         )
 
-        // إذا لم نجد عنوان واضح، نرجع لأول عمود يحتوي على أكبر عدد من قيم تشبه الباركود.
         let detectedColumn = barcodeColumnIndex
-
         if (detectedColumn === -1) {
           const maxColumns = Math.max(...rows.slice(0, 50).map((row) => row.length), 0)
           let bestColumn = 0
           let bestScore = -1
-
           for (let col = 0; col < maxColumns; col++) {
             let score = 0
-
             for (const row of rows.slice(1, 101)) {
               const value = normalizeBarcode(row[col])
               if (value && /^\d{6,}$/.test(value)) score++
             }
-
             if (score > bestScore) {
               bestScore = score
               bestColumn = col
             }
           }
-
           detectedColumn = bestColumn
         }
 
         const barcodes = Array.from(
-          new Set(
-            rows
-              .slice(1)
-              .map((row) => normalizeBarcode(row[detectedColumn]))
-              .filter(Boolean)
-          )
+          new Set(rows.slice(1).map((row) => normalizeBarcode(row[detectedColumn])).filter(Boolean))
         )
+        if (barcodes.length === 0) throw new Error('لم يتم العثور على أي باركود صالح داخل الملف')
 
-        if (barcodes.length === 0) {
-          throw new Error('لم يتم العثور على أي باركود صالح داخل الملف')
-        }
-
-        // تطبيع باركودات قاعدة البيانات أيضاً حتى لا تفشل المطابقة بسبب مسافات
-        // أو صيغة رقمية مختلفة.
         const itemMap = new Map<string, OfferItem>()
-
         for (const item of allItems) {
           const normalized = normalizeBarcode(item.barcode)
-          if (normalized && !itemMap.has(normalized)) {
-            itemMap.set(normalized, item)
-          }
+          if (normalized && !itemMap.has(normalized)) itemMap.set(normalized, item)
         }
 
-        // نحافظ على نفس ترتيب الباركودات الموجود في ملف Excel.
         const matched: OfferItem[] = []
         const notFound: string[] = []
-
         for (const barcode of barcodes) {
           const item = itemMap.get(barcode)
-
-          if (item) {
-            matched.push(item)
-          } else {
-            notFound.push(barcode)
-          }
+          if (item) matched.push(item)
+          else notFound.push(barcode)
         }
 
         setExcelTotalRead(barcodes.length)
         setExcelMatchedItems(matched)
         setExcelUnmatchedBarcodes(notFound)
 
-        const columnName =
-          barcodeColumnIndex !== -1 && rows[0][detectedColumn]
-            ? ` من عمود "${rows[0][detectedColumn]}"`
-            : ''
-
+        const columnName = barcodeColumnIndex !== -1 && rows[0][detectedColumn] ? ` من عمود "${rows[0][detectedColumn]}"` : ''
         setStatus(
           `تم قراءة ${barcodes.length} باركود${columnName} — ${matched.length} له عرض حالياً` +
-            (notFound.length > 0 ? ` — ${notFound.length} غير مطابق` : '')
+          (notFound.length > 0 ? ` — ${notFound.length} غير مطابق` : '')
         )
       } catch (err: any) {
         setExcelMatchedItems([])
@@ -306,65 +223,12 @@ export default function PrintPage() {
         e.target.value = ''
       }
     }
-
     reader.onerror = () => {
       setExcelUploading(false)
       e.target.value = ''
       setStatus('حدث خطأ أثناء قراءة ملف الإكسل')
     }
-
     reader.readAsArrayBuffer(file)
-  }
-
-  const handleExcelAction = async (mode: 'download' | 'print') => {
-    if (excelMatchedItems.length === 0) {
-      setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
-      return
-    }
-    if (mode === 'print' && excelMatchedItems.length > 40) {
-      setStatus('أكثر من 40 ملصق — استخدم "تحميل" بدل الطباعة المباشرة لهذي الكمية (يقسمها لملفات مناسبة تلقائياً)')
-      return
-    }
-    const printWindow = mode === 'print' ? window.open('', '_blank') : null
-    setReadyDownloads([])
-    setExcelGenerating(true)
-    try {
-      await document.fonts.load('900 90px Tajawal')
-      await document.fonts.load('700 58px Tajawal')
-      await document.fonts.load('700 34px Tajawal')
-
-      if (mode === 'print') {
-        const freshBg = await fetchFreshBackground()
-        const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-        for (let i = 0; i < excelMatchedItems.length; i++) {
-          setStatus(`جاري توليد الملصق ${i + 1} من ${excelMatchedItems.length}...`)
-          await new Promise((r) => setTimeout(r, 0))
-          const canvas = await renderLabelCanvas(itemToLabelData(excelMatchedItems[i]), BULK_SCALE, freshBg)
-          if (i > 0) doc.addPage([296.28, 496.2])
-          addCanvasToPdf(doc, canvas)
-        }
-        doc.autoPrint()
-        const blobUrl = doc.output('bloburl')
-        if (printWindow) {
-          printWindow.location.href = blobUrl as unknown as string
-          setStatus('تم فتح نافذة الطباعة')
-        } else {
-          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
-        }
-      } else {
-        const files = await generateBulkPdfFiles(excelMatchedItems, 'ملصقات_الملف_المرفوع', setStatus)
-        setReadyDownloads(files)
-        setStatus(
-          `جهّزنا ${excelMatchedItems.length} ملصق` +
-          (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
-        )
-      }
-    } catch (err: any) {
-      if (printWindow) printWindow.close()
-      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
-    } finally {
-      setExcelGenerating(false)
-    }
   }
 
   const handleAddExcelResultsToQueue = () => {
@@ -386,37 +250,8 @@ export default function PrintPage() {
     setStatus(`تم تحميل ملف إكسل فيه ${allItems.length} منتج`)
   }
 
-  const handleDownloadAllLabels = async () => {
-    if (allItems.length === 0) {
-      setStatus('لا توجد عروض حالياً')
-      return
-    }
-    setReadyDownloads([])
-    setDownloadsGenerating(true)
-    try {
-      await document.fonts.load('900 90px Tajawal')
-      await document.fonts.load('700 58px Tajawal')
-      await document.fonts.load('700 34px Tajawal')
-
-      const files = await generateBulkPdfFiles(allItems, 'ملصقات_كل_المنتجات', setStatus)
-      setReadyDownloads(files)
-      setStatus(
-        `جهّزنا ${allItems.length} ملصق` +
-        (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
-      )
-    } catch (err: any) {
-      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
-    } finally {
-      setDownloadsGenerating(false)
-    }
-  }
-
   const filteredItems = searchText.trim().length >= 1
-    ? allItems.filter(
-        (item) =>
-          item.barcode.includes(searchText.trim()) ||
-          item.product_name.includes(searchText.trim())
-      )
+    ? allItems.filter((item) => item.barcode.includes(searchText.trim()) || item.product_name.includes(searchText.trim()))
     : allItems
 
   useEffect(() => {
@@ -426,10 +261,7 @@ export default function PrintPage() {
   }, [status])
 
   const fetchOffers = async () => {
-    const { data } = await supabase
-      .from('offer_items')
-      .select('*')
-      .order('created_at', { ascending: false })
+    const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
     if (data) setAllItems(data.filter((i) => i.is_active !== false))
   }
 
@@ -439,8 +271,6 @@ export default function PrintPage() {
     const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
     renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * SCALE, REF_H * SCALE)
       .then((canvas) => {
-        // نحوّل الخلفية لصورة ثابتة مستقرة (بدل لوح رسم مؤقت قد يفقد محتواه بالذاكرة
-        // بعد عمليات توليد كثيرة متتالية) — هذا يمنع مشكلة الملصقات السوداء/الفاضية بالتوليد الجماعي
         const dataUrl = canvas.toDataURL('image/png')
         const img = new Image()
         img.onload = () => {
@@ -450,11 +280,8 @@ export default function PrintPage() {
         img.onerror = () => setBgReady(false)
         img.src = dataUrl
       })
-      .catch(() => {
-        setBgReady(false)
-      })
+      .catch(() => setBgReady(false))
 
-    // Realtime: أي تحديث ينزّله الأدمن يظهر هنا فوراً بدون Refresh
     const channel = supabase
       .channel('print-general-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'offer_items' }, () => fetchOffers())
@@ -465,6 +292,10 @@ export default function PrintPage() {
     }
   }, [])
 
+  // ========================================
+  // توليد الملصقات — بنفس الطريقة تماماً بدون فرق بين "مفرد" و"جماعي"
+  // (نفس السطور، نفس الترتيب، الفرق الوحيد إنه بحلقة تكرار)
+  // ========================================
   const renderLabelCanvas = async (
     data: LabelData,
     scale: number = SCALE,
@@ -476,7 +307,6 @@ export default function PrintPage() {
     const ctx = canvas.getContext('2d')!
     ctx.textBaseline = 'middle'
 
-    // خلفية بيضاء افتراضية أول شي — تضمن الكانفاس ما يفضل شفاف أبداً
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
@@ -533,78 +363,115 @@ export default function PrintPage() {
     return canvas
   }
 
-  // دقة مخفّضة للتوليد الجماعي (عشرات/مئات الملصقات) — لسا واضحة جداً للطباعة (~300 نقطة/إنش)
-  // بس تقلل حجم الملف والذاكرة المستخدمة بشكل كبير، عشان الجهاز ما يعلّق
-  const BULK_SCALE = 2
-
-  // يجيب نسخة جديدة تماماً من خلفية القالب، محلية بس لهذي العملية —
-  // بدون أي اعتماد على أي نسخة محفوظة سابقاً بالذاكرة (يمنع مشكلة الخلفية اللي تضيع)
-  const fetchFreshBackground = async (): Promise<HTMLCanvasElement | null> => {
+  const fetchFreshBackground = async (scale: number): Promise<HTMLCanvasElement | null> => {
     try {
       const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.pdf')
-      const canvas = await renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * BULK_SCALE, REF_H * BULK_SCALE)
-      return canvas
+      return await renderPdfToCanvas(`${bgData.publicUrl}?t=${Date.now()}`, REF_W * scale, REF_H * scale)
     } catch {
       return null
     }
   }
 
-  // يضيف الكانفاس إلى PDF بعد تحويله لصورة فعلية.
-  // هذا أكثر استقراراً من تمرير HTMLCanvasElement مباشرة إلى jsPDF عند التوليد الجماعي،
-  // ويمنع الصفحات السوداء أو الفارغة الناتجة عن مشاكل الذاكرة/ضغط PNG.
-  const addCanvasToPdf = (
-    doc: jsPDF,
-    canvas: HTMLCanvasElement
-  ) => {
-    const imageData = canvas.toDataURL('image/jpeg', 0.95)
+  // دالة توليد وحيدة يستخدمها كل شي (مفرد، متعدد، الكل) — بدون أي تفريع منطق
+  // ما فيه ضغط PDF، ما فيه JPEG، ما فيه تمرير مقاس مخصص لـ addPage — أبسط شكل ممكن لـ jsPDF
+  const generatePdf = async (
+    items: OfferItem[],
+    scale: number,
+    onProgress?: (msg: string) => void
+  ): Promise<jsPDF> => {
+    const bg = scale === SCALE ? bgImageRef.current : await fetchFreshBackground(scale)
+    const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
 
-    doc.addImage(
-      imageData,
-      'JPEG',
-      0,
-      0,
-      296.28,
-      496.2,
-      undefined,
-      'MEDIUM'
-    )
+    for (let i = 0; i < items.length; i++) {
+      if (onProgress) {
+        onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
+      }
+      const canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
+      if (i > 0) doc.addPage()
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+    }
+
+    return doc
   }
 
-  // ينشئ ملف/ملفات PDF لمجموعة كبيرة من الملصقات، بتجزيء تلقائي لو العدد كبير
-  const generateBulkPdfFiles = async (
-    items: OfferItem[],
-    baseFilename: string,
-    onProgress: (msg: string) => void
-  ): Promise<{ url: string; filename: string }[]> => {
-    const freshBg = await fetchFreshBackground()
-
-    const CHUNK_SIZE = 40
-    const chunks: OfferItem[][] = []
-    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-      chunks.push(items.slice(i, i + CHUNK_SIZE))
+  const handleDownloadAllLabels = async () => {
+    if (allItems.length === 0) {
+      setStatus('لا توجد عروض حالياً')
+      return
     }
+    setReadyDownloads([])
+    setDownloadsGenerating(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
 
-    const results: { url: string; filename: string }[] = []
+      const CHUNK_SIZE = 40
+      const chunks: OfferItem[][] = []
+      for (let i = 0; i < allItems.length; i += CHUNK_SIZE) chunks.push(allItems.slice(i, i + CHUNK_SIZE))
 
-    for (let c = 0; c < chunks.length; c++) {
-      const chunk = chunks[c]
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-
-      for (let i = 0; i < chunk.length; i++) {
-        const overallIndex = c * CHUNK_SIZE + i + 1
-        onProgress(`جاري توليد الملصق ${overallIndex} من ${items.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
-        const canvas = await renderLabelCanvas(itemToLabelData(chunk[i]), BULK_SCALE, freshBg)
-        if (i > 0) doc.addPage([296.28, 496.2])
-        addCanvasToPdf(doc, canvas)
+      const files: { url: string; filename: string }[] = []
+      for (let c = 0; c < chunks.length; c++) {
+        const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) =>
+          setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`)
+        )
+        const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
+        files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_كل_المنتجات${partSuffix}.pdf` })
       }
 
-      const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
-      const blobUrl = doc.output('bloburl') as unknown as string
-      results.push({ url: blobUrl, filename: `${baseFilename}${partSuffix}.pdf` })
+      setReadyDownloads(files)
+      setStatus(`جهّزنا ${allItems.length} ملصق — اضغط زر التحميل تحت`)
+    } catch (err: any) {
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setDownloadsGenerating(false)
     }
+  }
 
-    return results
+  const handleExcelAction = async (mode: 'download' | 'print') => {
+    if (excelMatchedItems.length === 0) {
+      setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
+      return
+    }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setReadyDownloads([])
+    setExcelGenerating(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      if (mode === 'print') {
+        const doc = await generatePdf(excelMatchedItems, BULK_SCALE, setStatus)
+        doc.autoPrint()
+        const blobUrl = doc.output('bloburl')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
+      } else {
+        const CHUNK_SIZE = 40
+        const chunks: OfferItem[][] = []
+        for (let i = 0; i < excelMatchedItems.length; i += CHUNK_SIZE) chunks.push(excelMatchedItems.slice(i, i + CHUNK_SIZE))
+
+        const files: { url: string; filename: string }[] = []
+        for (let c = 0; c < chunks.length; c++) {
+          const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) => setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`))
+          const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
+          files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_الملف_المرفوع${partSuffix}.pdf` })
+        }
+        setReadyDownloads(files)
+        setStatus(`جهّزنا ${excelMatchedItems.length} ملصق — اضغط زر التحميل تحت`)
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setExcelGenerating(false)
+    }
   }
 
   const handleQueueAction = async (mode: 'download' | 'print') => {
@@ -612,14 +479,7 @@ export default function PrintPage() {
       setStatus('قائمة الطباعة فاضية — أضف منتجات أول')
       return
     }
-    if (mode === 'print' && printQueue.length > 40) {
-      setStatus('أكثر من 40 ملصق — استخدم "تحميل الكل" بدل الطباعة المباشرة لهذي الكمية (يقسمها لملفات مناسبة تلقائياً)')
-      return
-    }
-    // نفتح نافذة فاضية فوراً (استجابة مباشرة لضغطة المستخدم) عشان المتصفح ما يحظرها،
-    // ونعبيها بالملف بعد ما يخلص التوليد
     const printWindow = mode === 'print' ? window.open('', '_blank') : null
-
     setReadyDownloads([])
     setGeneratingQueue(true)
     try {
@@ -628,15 +488,7 @@ export default function PrintPage() {
       await document.fonts.load('700 34px Tajawal')
 
       if (mode === 'print') {
-        const freshBg = await fetchFreshBackground()
-        const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-        for (let i = 0; i < printQueue.length; i++) {
-          setStatus(`جاري توليد الملصق ${i + 1} من ${printQueue.length}...`)
-          await new Promise((r) => setTimeout(r, 0))
-          const canvas = await renderLabelCanvas(itemToLabelData(printQueue[i]), BULK_SCALE, freshBg)
-          if (i > 0) doc.addPage([296.28, 496.2])
-          addCanvasToPdf(doc, canvas)
-        }
+        const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
         doc.autoPrint()
         const blobUrl = doc.output('bloburl')
         if (printWindow) {
@@ -646,12 +498,18 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
         }
       } else {
-        const files = await generateBulkPdfFiles(printQueue, 'ملصقات_مختارة', setStatus)
+        const CHUNK_SIZE = 40
+        const chunks: OfferItem[][] = []
+        for (let i = 0; i < printQueue.length; i += CHUNK_SIZE) chunks.push(printQueue.slice(i, i + CHUNK_SIZE))
+
+        const files: { url: string; filename: string }[] = []
+        for (let c = 0; c < chunks.length; c++) {
+          const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) => setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`))
+          const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
+          files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_مختارة${partSuffix}.pdf` })
+        }
         setReadyDownloads(files)
-        setStatus(
-          `جهّزنا ${printQueue.length} ملصق` +
-          (files.length > 1 ? ` على ${files.length} ملفات — اضغط أزرار التحميل تحت` : ' — اضغط زر التحميل تحت')
-        )
+        setStatus(`جهّزنا ${printQueue.length} ملصق — اضغط زر التحميل تحت`)
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -686,8 +544,8 @@ export default function PrintPage() {
       }
 
       const canvas = await renderLabelCanvas(data)
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      addCanvasToPdf(doc, canvas)
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
 
       if (mode === 'print') {
         doc.autoPrint()
@@ -724,8 +582,8 @@ export default function PrintPage() {
       await document.fonts.load('700 34px Tajawal')
 
       const canvas = await renderLabelCanvas(itemToLabelData(item))
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2], compress: true })
-      addCanvasToPdf(doc, canvas)
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
 
       if (mode === 'print') {
         doc.autoPrint()
@@ -848,9 +706,7 @@ export default function PrintPage() {
                     href={d.url}
                     download={d.filename}
                     onClick={() => {
-                      setTimeout(() => {
-                        setReadyDownloads((prev) => prev.filter((_, i) => i !== idx))
-                      }, 800)
+                      setTimeout(() => setReadyDownloads((prev) => prev.filter((_, i) => i !== idx)), 800)
                     }}
                     className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
                   >
@@ -1075,10 +931,7 @@ export default function PrintPage() {
                       <Printer size={13} />
                       {generatingQueue ? 'جاري التوليد...' : 'طباعة الكل'}
                     </button>
-                    <button
-                      onClick={clearQueue}
-                      className="text-[var(--red)] hover:underline text-xs font-bold"
-                    >
+                    <button onClick={clearQueue} className="text-[var(--red)] hover:underline text-xs font-bold">
                       تفريغ
                     </button>
                   </div>
@@ -1096,10 +949,7 @@ export default function PrintPage() {
                       <p className="text-sm font-bold text-[var(--navy)] truncate">{item.product_name}</p>
                       <p className="text-xs text-gray-500">{item.barcode}</p>
                     </div>
-                    <button
-                      onClick={() => removeFromQueue(item.id)}
-                      className="text-gray-400 hover:text-[var(--red)] shrink-0"
-                    >
+                    <button onClick={() => removeFromQueue(item.id)} className="text-gray-400 hover:text-[var(--red)] shrink-0">
                       <X size={16} />
                     </button>
                   </div>
@@ -1131,7 +981,6 @@ export default function PrintPage() {
                   </h2>
                 </div>
 
-                {/* عرض بطاقات للجوال (بدل جدول مضغوط) */}
                 <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
                   {filteredItems.length === 0 && (
                     <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</p>
@@ -1176,7 +1025,6 @@ export default function PrintPage() {
                   ))}
                 </div>
 
-                {/* عرض جدول كامل بالشاشات الأكبر */}
                 <div className="hidden md:block overflow-x-auto">
                   <div className="max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm border-collapse">
