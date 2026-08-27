@@ -96,6 +96,13 @@ export default function PrintPage() {
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
   const [periodicChecks, setPeriodicChecks] = useState<Record<string, boolean>>({})
+  const [bulkJob, setBulkJob] = useState<{
+    items: OfferItem[]
+    baseFilename: string
+    totalChunks: number
+    currentChunk: number
+  } | null>(null)
+  const [generatingChunk, setGeneratingChunk] = useState(false)
   const bgImageRef = useRef<HTMLImageElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -457,38 +464,68 @@ export default function PrintPage() {
     return doc
   }
 
-  const handleDownloadAllLabels = async () => {
-    if (allItems.length === 0) {
-      setStatus('لا توجد عروض حالياً')
-      return
-    }
+  const BULK_CHUNK_SIZE = 100
+
+  // يولّد جزء واحد بس بكل مرة (بدل كل الأجزاء دفعة وحدة) — يمنع تراكم الذاكرة وتجمد المتصفح
+  const generateBulkChunk = async (
+    items: OfferItem[],
+    baseFilename: string,
+    chunkIndex: number,
+    totalChunks: number
+  ) => {
+    setGeneratingChunk(true)
+    // نحرر ذاكرة الملف السابق فوراً قبل توليد الجزء الجديد
+    readyDownloads.forEach((d) => {
+      try {
+        URL.revokeObjectURL(d.url)
+      } catch {}
+    })
     setReadyDownloads([])
-    setDownloadsGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const CHUNK_SIZE = 100
-      const chunks: OfferItem[][] = []
-      for (let i = 0; i < allItems.length; i += CHUNK_SIZE) chunks.push(allItems.slice(i, i + CHUNK_SIZE))
-
-      const files: { url: string; filename: string }[] = []
-      for (let c = 0; c < chunks.length; c++) {
-        const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) =>
-          setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`)
-        )
-        const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
-        files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_كل_المنتجات${partSuffix}.pdf` })
-      }
-
-      setReadyDownloads(files)
-      setStatus(`جهّزنا ${allItems.length} ملصق — اضغط زر التحميل تحت`)
+      const chunkItems = items.slice(chunkIndex * BULK_CHUNK_SIZE, (chunkIndex + 1) * BULK_CHUNK_SIZE)
+      const doc = await generatePdf(chunkItems, BULK_SCALE, (msg) =>
+        setStatus(`(جزء ${chunkIndex + 1} من ${totalChunks}) ${msg}`)
+      )
+      const partSuffix = totalChunks > 1 ? `_جزء${chunkIndex + 1}من${totalChunks}` : ''
+      const url = doc.output('bloburl') as unknown as string
+      setReadyDownloads([{ url, filename: `${baseFilename}${partSuffix}.pdf` }])
+      setBulkJob({ items, baseFilename, totalChunks, currentChunk: chunkIndex })
+      setStatus(`جهّزنا الجزء ${chunkIndex + 1} من ${totalChunks} (${chunkItems.length} ملصق) — اضغط زر التحميل تحت`)
     } catch (err: any) {
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
-      setDownloadsGenerating(false)
+      setGeneratingChunk(false)
     }
+  }
+
+  const startBulkDownloadJob = async (items: OfferItem[], baseFilename: string) => {
+    if (items.length === 0) {
+      setStatus('لا توجد عروض لتحميلها')
+      return
+    }
+    const totalChunks = Math.ceil(items.length / BULK_CHUNK_SIZE)
+    await generateBulkChunk(items, baseFilename, 0, totalChunks)
+  }
+
+  const handleGenerateNextBulkChunk = () => {
+    if (!bulkJob) return
+    const nextIndex = bulkJob.currentChunk + 1
+    if (nextIndex >= bulkJob.totalChunks) return
+    generateBulkChunk(bulkJob.items, bulkJob.baseFilename, nextIndex, bulkJob.totalChunks)
+  }
+
+  const handleDownloadAllLabels = async () => {
+    if (allItems.length === 0) {
+      setStatus('لا توجد عروض حالياً')
+      return
+    }
+    setDownloadsGenerating(true)
+    await startBulkDownloadJob(allItems, 'ملصقات_كل_المنتجات')
+    setDownloadsGenerating(false)
   }
 
   const handleExcelAction = async (mode: 'download' | 'print') => {
@@ -496,37 +533,27 @@ export default function PrintPage() {
       setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
       return
     }
-    const printWindow = mode === 'print' ? window.open('', '_blank') : null
-    setReadyDownloads([])
+    if (mode === 'download') {
+      setExcelGenerating(true)
+      await startBulkDownloadJob(excelMatchedItems, 'ملصقات_الملف_المرفوع')
+      setExcelGenerating(false)
+      return
+    }
+    const printWindow = window.open('', '_blank')
     setExcelGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      if (mode === 'print') {
-        const doc = await generatePdf(excelMatchedItems, BULK_SCALE, setStatus)
-        doc.autoPrint()
-        const blobUrl = doc.output('bloburl')
-        if (printWindow) {
-          printWindow.location.href = blobUrl as unknown as string
-          setStatus('تم فتح نافذة الطباعة')
-        } else {
-          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
-        }
+      const doc = await generatePdf(excelMatchedItems, BULK_SCALE, setStatus)
+      doc.autoPrint()
+      const blobUrl = doc.output('bloburl')
+      if (printWindow) {
+        printWindow.location.href = blobUrl as unknown as string
+        setStatus('تم فتح نافذة الطباعة')
       } else {
-        const CHUNK_SIZE = 100
-        const chunks: OfferItem[][] = []
-        for (let i = 0; i < excelMatchedItems.length; i += CHUNK_SIZE) chunks.push(excelMatchedItems.slice(i, i + CHUNK_SIZE))
-
-        const files: { url: string; filename: string }[] = []
-        for (let c = 0; c < chunks.length; c++) {
-          const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) => setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`))
-          const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
-          files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_الملف_المرفوع${partSuffix}.pdf` })
-        }
-        setReadyDownloads(files)
-        setStatus(`جهّزنا ${excelMatchedItems.length} ملصق — اضغط زر التحميل تحت`)
+        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -541,37 +568,27 @@ export default function PrintPage() {
       setStatus('قائمة الطباعة فاضية — أضف منتجات أول')
       return
     }
-    const printWindow = mode === 'print' ? window.open('', '_blank') : null
-    setReadyDownloads([])
+    if (mode === 'download') {
+      setGeneratingQueue(true)
+      await startBulkDownloadJob(printQueue, 'ملصقات_مختارة')
+      setGeneratingQueue(false)
+      return
+    }
+    const printWindow = window.open('', '_blank')
     setGeneratingQueue(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      if (mode === 'print') {
-        const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
-        doc.autoPrint()
-        const blobUrl = doc.output('bloburl')
-        if (printWindow) {
-          printWindow.location.href = blobUrl as unknown as string
-          setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
-        } else {
-          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
-        }
+      const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
+      doc.autoPrint()
+      const blobUrl = doc.output('bloburl')
+      if (printWindow) {
+        printWindow.location.href = blobUrl as unknown as string
+        setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
       } else {
-        const CHUNK_SIZE = 100
-        const chunks: OfferItem[][] = []
-        for (let i = 0; i < printQueue.length; i += CHUNK_SIZE) chunks.push(printQueue.slice(i, i + CHUNK_SIZE))
-
-        const files: { url: string; filename: string }[] = []
-        for (let c = 0; c < chunks.length; c++) {
-          const doc = await generatePdf(chunks[c], BULK_SCALE, (msg) => setStatus(`(جزء ${c + 1}/${chunks.length}) ${msg}`))
-          const partSuffix = chunks.length > 1 ? `_جزء${c + 1}من${chunks.length}` : ''
-          files.push({ url: doc.output('bloburl') as unknown as string, filename: `ملصقات_مختارة${partSuffix}.pdf` })
-        }
-        setReadyDownloads(files)
-        setStatus(`جهّزنا ${printQueue.length} ملصق — اضغط زر التحميل تحت`)
+        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
       }
     } catch (err: any) {
       if (printWindow) printWindow.close()
@@ -775,14 +792,17 @@ export default function PrintPage() {
           {readyDownloads.length > 0 && (
             <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg space-y-2 relative">
               <button
-                onClick={() => setReadyDownloads([])}
+                onClick={() => {
+                  setReadyDownloads([])
+                  setBulkJob(null)
+                }}
                 className="absolute top-3 left-3 text-emerald-700 hover:text-emerald-900"
                 title="إغلاق"
               >
                 <X size={16} />
               </button>
               <p className="text-sm text-emerald-800 font-bold pl-6">
-                ✅ {readyDownloads.length > 1 ? `${readyDownloads.length} ملفات جاهزة` : 'الملف جاهز'} — اضغط للتحميل
+                ✅ {bulkJob ? `الجزء ${bulkJob.currentChunk + 1} من ${bulkJob.totalChunks} جاهز` : 'الملف جاهز'} — اضغط للتحميل
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {readyDownloads.map((d, idx) => (
@@ -790,15 +810,21 @@ export default function PrintPage() {
                     key={idx}
                     href={d.url}
                     download={d.filename}
-                    onClick={() => {
-                      setTimeout(() => setReadyDownloads((prev) => prev.filter((_, i) => i !== idx)), 800)
-                    }}
                     className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
                   >
                     <Download size={14} />
-                    {readyDownloads.length > 1 ? `تحميل الجزء ${idx + 1}` : 'تحميل الملف الجاهز'}
+                    تحميل هذا الجزء
                   </a>
                 ))}
+                {bulkJob && bulkJob.currentChunk + 1 < bulkJob.totalChunks && (
+                  <button
+                    onClick={handleGenerateNextBulkChunk}
+                    disabled={generatingChunk}
+                    className="flex items-center gap-1.5 bg-white border-2 border-emerald-500 hover:bg-emerald-100 text-emerald-700 text-sm font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {generatingChunk ? 'جاري التوليد...' : `توليد الجزء التالي (${bulkJob.currentChunk + 2} من ${bulkJob.totalChunks})`}
+                  </button>
+                )}
               </div>
             </div>
           )}
