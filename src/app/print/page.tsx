@@ -74,14 +74,13 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'excel' | 'downloads' | 'queue' | 'periodicCheck'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'excel' | 'downloads' | 'queue' | 'periodicCheck'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [status, setStatus] = useState('')
   const [bgReady, setBgReady] = useState(false)
   const [printingId, setPrintingId] = useState<string | null>(null)
   const [printQueue, setPrintQueue] = useState<OfferItem[]>([])
-  const [bulkBarcodesText, setBulkBarcodesText] = useState('')
   const [generatingQueue, setGeneratingQueue] = useState(false)
   const [customName, setCustomName] = useState('')
   const [customPrevPrice, setCustomPrevPrice] = useState('')
@@ -96,6 +95,7 @@ export default function PrintPage() {
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
   const [periodicChecks, setPeriodicChecks] = useState<Record<string, boolean>>({})
+  const [periodicUnavailable, setPeriodicUnavailable] = useState<Record<string, boolean>>({})
   const [bulkJob, setBulkJob] = useState<{
     items: OfferItem[]
     baseFilename: string
@@ -117,32 +117,6 @@ export default function PrintPage() {
   }
 
   const clearQueue = () => setPrintQueue([])
-
-  const handleBulkAdd = () => {
-    const codes = Array.from(
-      new Set(bulkBarcodesText.split(/[\n,\s]+/).map((c) => normalizeBarcode(c)).filter(Boolean))
-    )
-    if (codes.length === 0) {
-      setStatus('اكتب أو الصق باركودات أول')
-      return
-    }
-    const itemMap = new Map(allItems.map((item) => [normalizeBarcode(item.barcode), item] as const))
-    const matched = codes.map((code) => itemMap.get(code)).filter((item): item is OfferItem => Boolean(item))
-    const matchedBarcodes = new Set(matched.map((m) => normalizeBarcode(m.barcode)))
-    const notFound = codes.filter((c) => !matchedBarcodes.has(c))
-
-    setPrintQueue((prev) => {
-      const existingIds = new Set(prev.map((i) => i.id))
-      const newOnes = matched.filter((m) => !existingIds.has(m.id))
-      return [...prev, ...newOnes]
-    })
-
-    setBulkBarcodesText('')
-    setStatus(
-      `تمت إضافة ${matched.length} منتج لقائمة الطباعة` +
-      (notFound.length > 0 ? ` — ${notFound.length} باركود ما تم لقاه بالعروض الحالية` : '')
-    )
-  }
 
   const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -276,12 +250,20 @@ export default function PrintPage() {
 
   // التشييك الدوري محفوظ محلياً بهذا الجهاز بس (ما يشتركه أي جهاز ثاني)
   useEffect(() => {
-    const saved = localStorage.getItem('print_periodic_checks')
-    if (saved) {
+    const savedChecks = localStorage.getItem('print_periodic_checks')
+    if (savedChecks) {
       try {
-        setPeriodicChecks(JSON.parse(saved))
+        setPeriodicChecks(JSON.parse(savedChecks))
       } catch {
         localStorage.removeItem('print_periodic_checks')
+      }
+    }
+    const savedUnavailable = localStorage.getItem('print_periodic_unavailable')
+    if (savedUnavailable) {
+      try {
+        setPeriodicUnavailable(JSON.parse(savedUnavailable))
+      } catch {
+        localStorage.removeItem('print_periodic_unavailable')
       }
     }
   }, [])
@@ -290,8 +272,16 @@ export default function PrintPage() {
     localStorage.setItem('print_periodic_checks', JSON.stringify(periodicChecks))
   }, [periodicChecks])
 
+  useEffect(() => {
+    localStorage.setItem('print_periodic_unavailable', JSON.stringify(periodicUnavailable))
+  }, [periodicUnavailable])
+
   const togglePeriodicCheck = (barcode: string) => {
     setPeriodicChecks((prev) => ({ ...prev, [barcode]: !prev[barcode] }))
+  }
+
+  const togglePeriodicUnavailable = (barcode: string) => {
+    setPeriodicUnavailable((prev) => ({ ...prev, [barcode]: !prev[barcode] }))
   }
 
   const handleStartNewPeriodicRound = () => {
@@ -300,7 +290,9 @@ export default function PrintPage() {
     setPeriodicChecks({})
   }
 
-  const periodicCheckedCount = allItems.filter((item) => periodicChecks[item.barcode]).length
+  // نستثني "غير المتوفر بفرعي" من العدّاد — النسبة تحسب بس على المنتجات المتوفرة فعلاً
+  const periodicRelevantItems = allItems.filter((item) => !periodicUnavailable[item.barcode])
+  const periodicCheckedCount = periodicRelevantItems.filter((item) => periodicChecks[item.barcode]).length
 
   const fetchOffers = async () => {
     const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
@@ -725,15 +717,6 @@ export default function PrintPage() {
               ملصق متنوع
             </button>
             <button
-              onClick={() => setActiveSection('bulk')}
-              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
-                activeSection === 'bulk' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <ListPlus size={15} />
-              إضافة عدة باركودات
-            </button>
-            <button
               onClick={() => setActiveSection('excel')}
               className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'excel' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
@@ -884,33 +867,6 @@ export default function PrintPage() {
                   {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
                 </button>
               </div>
-            </div>
-          )}
-
-          {activeSection === 'bulk' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
-              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
-                <ListPlus size={16} />
-                إضافة عدة باركودات دفعة وحدة
-              </h2>
-              <p className="text-xs text-gray-500 font-medium mb-3">
-                الصق أو اكتب عدة باركودات (كل وحدة بسطر، أو مفصولة بفاصلة أو مسافة)
-              </p>
-              <textarea
-                value={bulkBarcodesText}
-                onChange={(e) => setBulkBarcodesText(e.target.value)}
-                rows={6}
-                placeholder="6281007020001&#10;6281007020002&#10;6281007020003"
-                dir="ltr"
-                className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20 resize-none"
-              />
-              <button
-                onClick={handleBulkAdd}
-                className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors"
-              >
-                <ListPlus size={13} />
-                أضف هذي الباركودات لقائمة الطباعة
-              </button>
             </div>
           )}
 
@@ -1093,11 +1049,11 @@ export default function PrintPage() {
                   <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
                     <div
                       className="bg-emerald-500 h-full transition-all"
-                      style={{ width: `${allItems.length > 0 ? (periodicCheckedCount / allItems.length) * 100 : 0}%` }}
+                      style={{ width: `${periodicRelevantItems.length > 0 ? (periodicCheckedCount / periodicRelevantItems.length) * 100 : 0}%` }}
                     />
                   </div>
                   <span className="text-xs font-black text-[var(--navy)] shrink-0">
-                    {periodicCheckedCount} من {allItems.length}
+                    {periodicCheckedCount} من {periodicRelevantItems.length}
                   </span>
                 </div>
               </div>
@@ -1109,23 +1065,36 @@ export default function PrintPage() {
                   )}
                   {allItems.map((item) => {
                     const isChecked = !!periodicChecks[item.barcode]
+                    const isUnavailable = !!periodicUnavailable[item.barcode]
                     return (
                       <div
                         key={item.id}
-                        className={`flex items-center justify-between gap-3 p-3.5 ${isChecked ? 'bg-emerald-50' : 'bg-white'}`}
+                        className={`flex items-center justify-between gap-3 p-3 ${
+                          isUnavailable ? 'bg-gray-50 opacity-60' : isChecked ? 'bg-emerald-50' : 'bg-white'
+                        }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <input
                             type="checkbox"
                             checked={isChecked}
+                            disabled={isUnavailable}
                             onChange={() => togglePeriodicCheck(item.barcode)}
-                            className="w-5 h-5 cursor-pointer accent-emerald-600 shrink-0"
+                            className="w-5 h-5 cursor-pointer accent-emerald-600 shrink-0 disabled:cursor-not-allowed"
                           />
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-[var(--navy)] truncate">{item.product_name}</p>
-                            <p className="text-[11px] text-gray-500">{item.barcode}</p>
-                          </div>
+                          <p className={`text-sm font-bold truncate ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
+                            {item.product_name}
+                          </p>
                         </div>
+                        <button
+                          onClick={() => togglePeriodicUnavailable(item.barcode)}
+                          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${
+                            isUnavailable
+                              ? 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              : 'bg-white border border-gray-300 text-gray-500 hover:bg-gray-100'
+                          }`}
+                        >
+                          {isUnavailable ? 'مو متوفر' : 'غير متوفر بفرعي'}
+                        </button>
                       </div>
                     )
                   })}
