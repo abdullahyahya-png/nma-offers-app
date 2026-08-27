@@ -1035,7 +1035,7 @@ export default function PrintPage() {
                       التشييك الدوري
                     </h2>
                     <p className="text-xs text-gray-500 font-medium mt-1">
-                      أكّد إن ملصق كل منتج موجود وصحيح — محفوظ بهذا الجهاز بس
+                      أكّد إن ملصق كل منتج موجود وصحيح
                     </p>
                   </div>
                   <button
@@ -1081,9 +1081,12 @@ export default function PrintPage() {
                             onChange={() => togglePeriodicCheck(item.barcode)}
                             className="w-5 h-5 cursor-pointer accent-emerald-600 shrink-0 disabled:cursor-not-allowed"
                           />
-                          <p className={`text-sm font-bold truncate ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
-                            {item.product_name}
-                          </p>
+                          <div className="min-w-0">
+                            <p className={`text-sm font-bold truncate ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
+                              {item.product_name}
+                            </p>
+                            <p className="text-[11px] text-gray-500">{item.barcode}</p>
+                          </div>
                         </div>
                         <button
                           onClick={() => togglePeriodicUnavailable(item.barcode)}
