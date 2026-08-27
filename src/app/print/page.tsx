@@ -660,15 +660,12 @@ export default function PrintPage() {
           <div className="w-full grid grid-cols-2 md:flex md:flex-col gap-1.5 bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
             <button
               onClick={() => setActiveSection('general')}
-              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'general' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <LayoutGrid size={15} />
-                كل العروض
-              </span>
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{allItems.length}</span>
+              <LayoutGrid size={15} />
+              كل العروض
             </button>
             <button
               onClick={() => setActiveSection('excel')}
@@ -718,15 +715,12 @@ export default function PrintPage() {
             </button>
             <button
               onClick={() => setActiveSection('makeup')}
-              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                 activeSection === 'makeup' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Layers size={15} />
-                عروض المكياج
-              </span>
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-pink-200 text-pink-700">{makeupItems.length}</span>
+              <Layers size={15} />
+              عروض المكياج
             </button>
           </div>
         </aside>
