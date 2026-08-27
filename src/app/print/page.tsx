@@ -1096,20 +1096,20 @@ export default function PrintPage() {
                     return (
                       <div
                         key={item.id}
-                        className={`flex items-center justify-between gap-3 p-3 ${
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 ${
                           isUnavailable ? 'bg-gray-50 opacity-60' : isChecked ? 'bg-emerald-50' : 'bg-white'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex items-start gap-3 min-w-0">
                           <input
                             type="checkbox"
                             checked={isChecked}
                             disabled={isUnavailable}
                             onChange={() => togglePeriodicCheck(item.barcode)}
-                            className="w-5 h-5 cursor-pointer accent-emerald-600 shrink-0 disabled:cursor-not-allowed"
+                            className="w-5 h-5 mt-0.5 cursor-pointer accent-emerald-600 shrink-0 disabled:cursor-not-allowed"
                           />
                           <div className="min-w-0">
-                            <p className={`text-sm font-bold truncate ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
+                            <p className={`text-sm font-bold break-words ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
                               {item.product_name}
                             </p>
                             <p className="text-[11px] text-gray-500">{item.barcode}</p>
@@ -1117,7 +1117,7 @@ export default function PrintPage() {
                         </div>
                         <button
                           onClick={() => togglePeriodicUnavailable(item.barcode)}
-                          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 transition-colors ${
+                          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 self-start sm:self-auto transition-colors ${
                             isUnavailable
                               ? 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                               : 'bg-white border border-gray-300 text-gray-500 hover:bg-gray-100'
