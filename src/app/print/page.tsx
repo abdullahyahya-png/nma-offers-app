@@ -993,7 +993,11 @@ export default function PrintPage() {
                             <p className={`text-sm font-bold break-words ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
                               {item.product_name}
                             </p>
-                            <p className="text-[11px] text-gray-500">{item.barcode}</p>
+                            <p className="text-[11px] text-gray-500">
+                              {item.barcode} ·{' '}
+                              <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                              <span className={isUnavailable ? 'text-gray-400' : 'text-[var(--red)] font-bold'}>{item.offer_price.toFixed(2)}</span>
+                            </p>
                           </div>
                         </div>
                         <button
