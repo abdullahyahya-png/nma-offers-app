@@ -649,7 +649,7 @@ export default function PrintPage() {
         <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
-            <p className="text-[var(--red)] text-[11px] font-bold">واجهة الطباعة السريعة</p>
+            <p className="text-[var(--red)] text-sm font-bold">واجهة الطباعة السريعة ومتابعة العروض</p>
             <h1 className="text-[var(--navy)] text-base font-black">عروض عامة</h1>
           </div>
         </div>
