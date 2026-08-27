@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import InstallPWAButton from '../components/InstallPWAButton'
+import InstallPWAButtonAuto from '../components/InstallPWAButtonAuto'
 import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud, ClipboardCheck } from 'lucide-react'
 
 interface OfferItem {
@@ -644,7 +644,7 @@ export default function PrintPage() {
 
   return (
     <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
-      <InstallPWAButton />
+      <InstallPWAButtonAuto />
       <header className="bg-white border-b-4 border-[var(--navy)]">
         <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />

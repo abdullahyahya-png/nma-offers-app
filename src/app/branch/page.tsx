@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import { supabase } from '../../lib/supabase'
-import InstallPWAButton from '../components/InstallPWAButton'
 import {
   Search, UploadCloud, Download, Printer, Package, Sparkles, Bell,
   XCircle, CheckCircle2, LayoutGrid, Layers, ChevronDown, ChevronUp,
@@ -797,7 +796,6 @@ export default function BranchPage() {
   if (!selectedBranch) {
     return (
       <div className="min-h-screen bg-[var(--background)] flex items-center justify-center p-6">
-        <InstallPWAButton />
         <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 shadow-sm p-8 w-full max-w-sm">
           <div className="flex flex-col items-center mb-6">
             <img src="/logo.png" alt="شعار العروض" className="w-16 h-16 object-contain mb-3" />
@@ -847,7 +845,6 @@ export default function BranchPage() {
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
-      <InstallPWAButton />
       <header className="bg-white border-b-4 border-[var(--navy)]">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-4 flex items-center gap-4">
           <img src="/logo.png" alt="شعار العروض" className="w-16 h-16 md:w-20 md:h-20 object-contain shrink-0" />
