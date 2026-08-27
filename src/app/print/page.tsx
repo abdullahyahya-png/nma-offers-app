@@ -293,9 +293,8 @@ export default function PrintPage() {
   }
 
   const handleStartNewPeriodicRound = () => {
-    const confirmed = window.confirm('بتبدأ دورة تشييك جديدة — كل العلامات ترجع فاضية من جديد على هذا الجهاز. متأكد؟')
-    if (!confirmed) return
     setPeriodicChecks({})
+    setPeriodicUnavailable({})
   }
 
   // نستثني "غير المتوفر بفرعي" من العدّاد — النسبة تحسب بس على المنتجات المتوفرة فعلاً
