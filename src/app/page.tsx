@@ -51,6 +51,7 @@ interface OfferItem {
   is_active?: boolean
   batch_id?: string | null
   cancelled_batch_id?: string | null
+  is_makeup?: boolean
 }
 
 interface OfferBatch {
@@ -149,6 +150,7 @@ export default function AdminPage() {
 
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [batchLabel, setBatchLabel] = useState('')
+  const [isMakeupBatch, setIsMakeupBatch] = useState(false)
 
   const [pendingCancelFile, setPendingCancelFile] = useState<File | null>(null)
   const [cancelBatchLabel, setCancelBatchLabel] = useState('')
@@ -169,6 +171,7 @@ export default function AdminPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editPrevPrice, setEditPrevPrice] = useState('')
   const [editOfferPrice, setEditOfferPrice] = useState('')
+  const [editIsMakeup, setEditIsMakeup] = useState(false)
   const [editName, setEditName] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
@@ -431,6 +434,7 @@ export default function AdminPage() {
         batch_id: batchData.id,
         is_active: true,
         cancelled_batch_id: null,
+        is_makeup: isMakeupBatch,
       }))
 
       const { error } = await supabase
@@ -444,11 +448,13 @@ export default function AdminPage() {
       } else {
         setStatus(
           `تم حفظ ${parsedItems.length} منتج ضمن "${batchLabel}"` +
+          (isMakeupBatch ? ' (فئة مكياج)' : '') +
           (duplicatesInFile > 0 ? ` — تم تجاهل ${duplicatesInFile} صف مكرر بنفس الباركود داخل الملف` : '')
         )
         setPendingFile(null)
         setBatchLabel('')
-        logActivity('رفع تحديث جديد', batchData.id, `${batchLabel} — ${parsedItems.length} منتج`)
+        setIsMakeupBatch(false)
+        logActivity('رفع تحديث جديد', batchData.id, `${batchLabel} — ${parsedItems.length} منتج${isMakeupBatch ? ' (مكياج)' : ''}`)
         fetchItems()
         fetchBatches()
       }
@@ -596,6 +602,7 @@ export default function AdminPage() {
     setEditName(item.product_name)
     setEditPrevPrice(String(item.previous_price))
     setEditOfferPrice(String(item.offer_price))
+    setEditIsMakeup(!!item.is_makeup)
   }
 
   const handleCancelEdit = () => {
@@ -603,6 +610,7 @@ export default function AdminPage() {
     setEditName('')
     setEditPrevPrice('')
     setEditOfferPrice('')
+    setEditIsMakeup(false)
   }
 
   const handleSaveEdit = async (id: string) => {
@@ -620,7 +628,7 @@ export default function AdminPage() {
     setSavingEdit(true)
     const { error } = await supabase
       .from('offer_items')
-      .update({ product_name: name, previous_price: prev, offer_price: offer })
+      .update({ product_name: name, previous_price: prev, offer_price: offer, is_makeup: editIsMakeup })
       .eq('id', id)
     setSavingEdit(false)
 
@@ -628,7 +636,7 @@ export default function AdminPage() {
       setStatus(`خطأ بالتعديل: ${error.message}`)
     } else {
       setItems((prevItems) =>
-        prevItems.map((item) => (item.id === id ? { ...item, product_name: name, previous_price: prev, offer_price: offer } : item))
+        prevItems.map((item) => (item.id === id ? { ...item, product_name: name, previous_price: prev, offer_price: offer, is_makeup: editIsMakeup } : item))
       )
       setStatus('تم تعديل المنتج بنجاح')
       logActivity('تعديل منتج', id)
@@ -990,6 +998,15 @@ export default function AdminPage() {
                     onChange={(e) => setBatchLabel(e.target.value)}
                     className="w-full bg-white border-2 border-[var(--navy)]/20 rounded-lg p-2 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
                   />
+                  <label className="flex items-center gap-2 mb-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isMakeupBatch}
+                      onChange={(e) => setIsMakeupBatch(e.target.checked)}
+                      className="w-4 h-4 cursor-pointer accent-[var(--navy)]"
+                    />
+                    <span className="text-xs text-[var(--navy)] font-bold">هذا تحديث فئة مكياج (يُستثنى من الطباعة الجماعية العامة)</span>
+                  </label>
                   <div className="flex gap-2">
                     <button
                       onClick={handleConfirmUpload}
@@ -999,7 +1016,7 @@ export default function AdminPage() {
                       {uploading ? 'جاري الرفع...' : 'تأكيد ورفع التحديث'}
                     </button>
                     <button
-                      onClick={() => { setPendingFile(null); setBatchLabel('') }}
+                      onClick={() => { setPendingFile(null); setBatchLabel(''); setIsMakeupBatch(false) }}
                       className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold rounded-lg transition-colors"
                     >
                       إلغاء
@@ -1481,13 +1498,29 @@ export default function AdminPage() {
                           <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
                           <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">
                             {isEditing ? (
-                              <input
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                              />
+                              <div className="space-y-1.5">
+                                <input
+                                  value={editName}
+                                  onChange={(e) => setEditName(e.target.value)}
+                                  className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                                />
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editIsMakeup}
+                                    onChange={(e) => setEditIsMakeup(e.target.checked)}
+                                    className="w-3.5 h-3.5 cursor-pointer accent-[var(--navy)]"
+                                  />
+                                  <span className="text-[11px] text-gray-500 font-medium">فئة مكياج</span>
+                                </label>
+                              </div>
                             ) : (
-                              item.product_name
+                              <span className="flex items-center gap-1.5">
+                                {item.product_name}
+                                {item.is_makeup && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700">مكياج</span>
+                                )}
+                              </span>
                             )}
                           </td>
                           <td className="p-3 text-gray-500 font-bold border-2 border-[var(--navy)]/10">

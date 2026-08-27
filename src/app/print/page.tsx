@@ -14,6 +14,7 @@ interface OfferItem {
   previous_price: number
   offer_price: number
   is_active?: boolean
+  is_makeup?: boolean
 }
 
 interface LabelData {
@@ -74,9 +75,10 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'excel' | 'downloads' | 'queue' | 'periodicCheck'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
+  const [makeupSearchText, setMakeupSearchText] = useState('')
   const [status, setStatus] = useState('')
   const [bgReady, setBgReady] = useState(false)
   const [printingId, setPrintingId] = useState<string | null>(null)
@@ -234,6 +236,13 @@ export default function PrintPage() {
   const filteredItems = searchText.trim().length >= 1
     ? allItems.filter((item) => item.barcode.includes(searchText.trim()) || item.product_name.includes(searchText.trim()))
     : allItems
+
+  // منتجات المكياج تُستثنى من الطباعة/التحميل الجماعي العام (نفس البراند، درجات مختلفة — ملصق واحد يكفيها)
+  const makeupItems = allItems.filter((item) => item.is_makeup)
+  const nonMakeupItems = allItems.filter((item) => !item.is_makeup)
+  const filteredMakeupItems = makeupSearchText.trim().length >= 1
+    ? makeupItems.filter((item) => item.barcode.includes(makeupSearchText.trim()) || item.product_name.includes(makeupSearchText.trim()))
+    : makeupItems
 
   useEffect(() => {
     if (!status) return
@@ -511,12 +520,18 @@ export default function PrintPage() {
   }
 
   const handleDownloadAllLabels = async () => {
-    if (allItems.length === 0) {
-      setStatus('لا توجد عروض حالياً')
+    if (nonMakeupItems.length === 0) {
+      setStatus('لا توجد عروض حالياً (غير المكياج)')
       return
     }
     setDownloadsGenerating(true)
-    await startBulkDownloadJob(allItems, 'ملصقات_كل_المنتجات')
+    await startBulkDownloadJob(nonMakeupItems, 'ملصقات_كل_المنتجات')
+    setDownloadsGenerating(false)
+  }
+
+  const handleDownloadMakeupLabels = async () => {
+    setDownloadsGenerating(true)
+    await startBulkDownloadJob(makeupItems, 'ملصقات_المكياج')
     setDownloadsGenerating(false)
   }
 
@@ -762,6 +777,18 @@ export default function PrintPage() {
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{periodicCheckedCount}/{allItems.length}</span>
               )}
             </button>
+            <button
+              onClick={() => setActiveSection('makeup')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'makeup' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Layers size={15} />
+                مكياج
+              </span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-pink-200 text-pink-700">{makeupItems.length}</span>
+            </button>
           </div>
         </aside>
 
@@ -967,7 +994,7 @@ export default function PrintPage() {
                   <span className="text-sm font-bold">
                     {downloadsGenerating ? 'جاري التوليد...' : 'تحميل ملصقات كل المنتجات'}
                   </span>
-                  <span className="text-[11px] text-gray-500">(ملف PDF واحد، قد يستغرق وقت)</span>
+                  <span className="text-[11px] text-gray-500">({nonMakeupItems.length} منتج، بدون فئة المكياج)</span>
                 </button>
               </div>
             </div>
@@ -1101,6 +1128,149 @@ export default function PrintPage() {
                       </div>
                     )
                   })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'makeup' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={makeupSearchText}
+                      onChange={(e) => setMakeupSearchText(e.target.value)}
+                      placeholder="ابحث بالاسم أو الباركود"
+                      className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                    />
+                  </div>
+                  {makeupItems.length > 0 && (
+                    <button
+                      onClick={handleDownloadMakeupLabels}
+                      disabled={downloadsGenerating}
+                      className="flex items-center gap-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      <Printer size={13} />
+                      {downloadsGenerating ? 'جاري التوليد...' : `تحميل كل ملصقات المكياج (${makeupItems.length})`}
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-400 font-medium">
+                  منتجات المكياج مستثناة من الطباعة الجماعية العامة — تطبعها من هنا لحالها
+                </p>
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Layers size={16} />
+                    منتجات المكياج ({filteredMakeupItems.length})
+                  </h2>
+                </div>
+
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {filteredMakeupItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</p>
+                  )}
+                  {filteredMakeupItems.map((item) => (
+                    <div key={item.id} className="p-3.5 space-y-2">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--navy)]">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.barcode} ·{' '}
+                          <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                          <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => addToQueue(item)}
+                          disabled={queueIds.has(item.id)}
+                          className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <ListPlus size={13} />
+                          {queueIds.has(item.id) ? 'مضاف' : 'أضف'}
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'download')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Download size={13} />
+                          تحميل
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'print')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Printer size={13} />
+                          طباعة
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                        <tr>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                          <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMakeupItems.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</td>
+                          </tr>
+                        )}
+                        {filteredMakeupItems.map((item, i) => (
+                          <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-pink-50/40'} hover:bg-pink-100/50 transition-colors`}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                            <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => addToQueue(item)}
+                                  disabled={queueIds.has(item.id)}
+                                  title="أضف لقائمة الطباعة"
+                                  className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
+                                >
+                                  <ListPlus size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'download')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Download size={13} />
+                                  تحميل
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'print')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Printer size={13} />
+                                  طباعة
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
