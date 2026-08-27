@@ -1,118 +1,55 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import jsPDF from 'jspdf'
 import * as XLSX from 'xlsx'
-import { supabase } from '../lib/supabase'
-import WhatsAppNotifySection from './components/WhatsAppNotifySection'
-import BranchAccountsSection from './components/BranchAccountsSection'
-import InstallPWAButton from './components/InstallPWAButton'
-import AuditOverviewSection from './components/AuditOverviewSection'
-import {
-  UploadCloud,
-  ImagePlus,
-  PlusCircle,
-  Trash2,
-  Pencil,
-  Check,
-  Search,
-  Package,
-  TrendingUp,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  XCircle,
-  X,
-  History,
-  ChevronUp,
-  FileCheck,
-  Download,
-  LayoutGrid,
-  Bell,
-  Settings,
-  LogOut,
-  CheckCircle2,
-  MessageCircle,
-  Send,
-  Store,
-  Phone,
-  KeyRound,
-  ClipboardCheck,
-} from 'lucide-react'
+import { supabase } from '../../lib/supabase'
+import InstallPWAButton from '../components/InstallPWAButton'
+import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud, ClipboardCheck } from 'lucide-react'
 
 interface OfferItem {
-  id?: string
+  id: string
   barcode: string
   product_name: string
   previous_price: number
   offer_price: number
-  created_at?: string
   is_active?: boolean
-  batch_id?: string | null
-  cancelled_batch_id?: string | null
   is_makeup?: boolean
 }
 
-interface OfferBatch {
-  id: string
-  label: string
-  batch_type: 'new' | 'cancel'
-  created_at: string
-}
-
-interface Branch {
-  id: string
+interface LabelData {
   name: string
+  offerPriceText: string
+  prevPriceText: string
+  barcodeText: string
 }
 
-interface Message {
-  id: string
-  sender_role: 'admin' | 'branch'
-  sender_branch_id: string | null
-  target_branch_id: string | null
-  body: string
-  created_at: string
-  is_read?: boolean
+const REF_W = 618
+const REF_H = 1034
+const SCALE = 4
+// دقة مخفّضة للتوليد الجماعي (عشرات/مئات الملصقات) — لسا واضحة جداً للطباعة (~300 نقطة/إنش)
+const BULK_SCALE = 2
+
+const POS = {
+  offerPrice: { xFrac: 0.45, yFrac: 545 / REF_H, fontPx: 90 },
+  prevPrice: { xFrac: 0.47, yFrac: 705 / REF_H, fontPx: 58 },
+  name: { xFrac: 0.5, yFrac: 845 / REF_H, fontPx: 34, lineSpacingPx: 38 },
+  barcode: { xFrac: 0.5, yFrac: 968 / REF_H, fontPx: 33 },
 }
 
-interface ActivityLog {
-  id: string
-  branch_id: string | null
-  actor_role: 'admin' | 'branch'
-  action: string
-  reference_id: string | null
-  details: string | null
-  created_at: string
-}
+const NAVY = '#150971'
+const RED = '#C00000'
 
-const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
-
-type SectionId = 'stats' | 'upload' | 'label' | 'cancel' | 'history' | 'manual' | 'messages' | 'table' | 'whatsapp' | 'activity' | 'accounts' | 'audit' | 'settings'
-type TableFilter = 'active' | 'all' | 'cancelled'
-
-const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
-  { id: 'stats', label: 'الإحصائيات', icon: LayoutGrid },
-  { id: 'upload', label: 'رفع تحديث جديد', icon: UploadCloud },
-  { id: 'label', label: 'ملصق العروض', icon: ImagePlus },
-  { id: 'cancel', label: 'إدارة الإلغاء', icon: XCircle },
-  { id: 'history', label: 'سجل التحديثات', icon: History },
-  { id: 'manual', label: 'إضافة يدوية', icon: PlusCircle },
-  { id: 'messages', label: 'الرسائل', icon: MessageCircle },
-  { id: 'whatsapp', label: 'واتساب الفروع', icon: Phone },
-  { id: 'accounts', label: 'حسابات الفروع', icon: KeyRound },
-  { id: 'audit', label: 'تدقيق الملصقات', icon: ClipboardCheck },
-  { id: 'activity', label: 'سجل النشاط', icon: History },
-  { id: 'table', label: 'جدول المنتجات', icon: Package },
-]
-
-function stripExtension(filename: string) {
-  return filename.replace(/\.(xlsx|xls)$/i, '')
-}
-
-function formatDate(dateStr: string) {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('ar-SA', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+function normalizeBarcode(raw: any): string {
+  if (raw === null || raw === undefined) return ''
+  let str = String(raw).trim().replace(/[\s,،]/g, '')
+  if (!str) return ''
+  if (/^\d+(?:\.\d+)?e[+-]?\d+$/i.test(str)) {
+    const num = Number(str)
+    if (Number.isFinite(num)) str = num.toFixed(0)
+  }
+  if (/^\d+\.0+$/.test(str)) str = str.replace(/\.0+$/, '')
+  return str
 }
 
 function downloadItemsAsExcel(items: OfferItem[], filename: string) {
@@ -128,190 +65,265 @@ function downloadItemsAsExcel(items: OfferItem[], filename: string) {
   XLSX.writeFile(workbook, `${filename}.xlsx`)
 }
 
-export default function AdminPage() {
-  const [items, setItems] = useState<OfferItem[]>([])
-  const [batches, setBatches] = useState<OfferBatch[]>([])
-  const [branches, setBranches] = useState<Branch[]>([])
-  const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null)
+function itemToLabelData(item: OfferItem): LabelData {
+  return {
+    name: item.product_name,
+    offerPriceText: item.offer_price.toFixed(2),
+    prevPriceText: item.previous_price.toFixed(2),
+    barcodeText: item.barcode,
+  }
+}
+
+export default function PrintPage() {
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup'>('general')
+  const [allItems, setAllItems] = useState<OfferItem[]>([])
+  const [searchText, setSearchText] = useState('')
+  const [makeupSearchText, setMakeupSearchText] = useState('')
   const [status, setStatus] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [uploadingCancel, setUploadingCancel] = useState(false)
-  const [uploadingBg, setUploadingBg] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [tableFilter, setTableFilter] = useState<TableFilter>('active')
-  const [activeSection, setActiveSection] = useState<SectionId>('stats')
-  const [labelPreviewUrl, setLabelPreviewUrl] = useState<string | null>(null)
-  const [labelExists, setLabelExists] = useState(true)
+  const [bgReady, setBgReady] = useState(false)
+  const [printingId, setPrintingId] = useState<string | null>(null)
+  const [printQueue, setPrintQueue] = useState<OfferItem[]>([])
+  const [generatingQueue, setGeneratingQueue] = useState(false)
+  const [customName, setCustomName] = useState('')
+  const [customPrevPrice, setCustomPrevPrice] = useState('')
+  const [customOfferPrice, setCustomOfferPrice] = useState('')
+  const [customNote, setCustomNote] = useState('')
+  const [customGenerating, setCustomGenerating] = useState(false)
+  const [excelUploading, setExcelUploading] = useState(false)
+  const [excelMatchedItems, setExcelMatchedItems] = useState<OfferItem[]>([])
+  const [excelUnmatchedBarcodes, setExcelUnmatchedBarcodes] = useState<string[]>([])
+  const [excelTotalRead, setExcelTotalRead] = useState<number | null>(null)
+  const [excelGenerating, setExcelGenerating] = useState(false)
+  const [downloadsGenerating, setDownloadsGenerating] = useState(false)
+  const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
+  const [periodicChecks, setPeriodicChecks] = useState<Record<string, boolean>>({})
+  const [periodicUnavailable, setPeriodicUnavailable] = useState<Record<string, boolean>>({})
+  const [bulkJob, setBulkJob] = useState<{
+    items: OfferItem[]
+    baseFilename: string
+    totalChunks: number
+    currentChunk: number
+  } | null>(null)
+  const [generatingChunk, setGeneratingChunk] = useState(false)
+  const bgImageRef = useRef<HTMLImageElement | null>(null)
 
-  const [newBarcode, setNewBarcode] = useState('')
-  const [newName, setNewName] = useState('')
-  const [newPrevPrice, setNewPrevPrice] = useState('')
-  const [newOfferPrice, setNewOfferPrice] = useState('')
+  const queueIds = new Set(printQueue.map((i) => i.id))
 
-  const [pendingFile, setPendingFile] = useState<File | null>(null)
-  const [batchLabel, setBatchLabel] = useState('')
-  const [isMakeupBatch, setIsMakeupBatch] = useState(false)
-
-  const [pendingCancelFile, setPendingCancelFile] = useState<File | null>(null)
-  const [cancelBatchLabel, setCancelBatchLabel] = useState('')
-
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
-
-  const [messages, setMessages] = useState<Message[]>([])
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([])
-  const [messageTarget, setMessageTarget] = useState('')
-  const [newMessageText, setNewMessageText] = useState('')
-  const [sendingMessage, setSendingMessage] = useState(false)
-
-  const [activationMap, setActivationMap] = useState<Record<string, Set<string>>>({})
-  const [removalMap, setRemovalMap] = useState<Record<string, Set<string>>>({})
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [tableSearchQuery, setTableSearchQuery] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editPrevPrice, setEditPrevPrice] = useState('')
-  const [editOfferPrice, setEditOfferPrice] = useState('')
-  const [editIsMakeup, setEditIsMakeup] = useState(false)
-  const [editName, setEditName] = useState('')
-  const [savingEdit, setSavingEdit] = useState(false)
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
-  const [showFactoryResetModal, setShowFactoryResetModal] = useState(false)
-  const [factoryResetInput, setFactoryResetInput] = useState('')
-  const [resettingFactory, setResettingFactory] = useState(false)
-
-  const askConfirm = (message: string, onConfirm: () => void) => {
-    setConfirmDialog({ message, onConfirm })
+  const addToQueue = (item: OfferItem) => {
+    if (queueIds.has(item.id)) return
+    setPrintQueue((prev) => [...prev, item])
   }
 
-  const wheelCooldownRef = useRef(false)
+  const removeFromQueue = (id: string) => {
+    setPrintQueue((prev) => prev.filter((i) => i.id !== id))
+  }
 
-  const handleTableWheel = (e: React.WheelEvent) => {
-    if (wheelCooldownRef.current) return
-    if (e.deltaY > 15) {
-      setPage((p) => Math.min(totalPages, p + 1))
-    } else if (e.deltaY < -15) {
-      setPage((p) => Math.max(1, p - 1))
-    } else {
+  const clearQueue = () => setPrintQueue([])
+
+  const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setExcelUploading(true)
+    setExcelMatchedItems([])
+    setExcelUnmatchedBarcodes([])
+    setExcelTotalRead(null)
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const data = event.target?.result
+        if (!data) throw new Error('تعذر قراءة ملف الإكسل')
+
+        const workbook = XLSX.read(data, { type: 'array' })
+        const sheet = workbook.Sheets[workbook.SheetNames[0]]
+        if (!sheet) throw new Error('لم يتم العثور على أي ورقة داخل الملف')
+
+        const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false })
+        if (rows.length < 2) throw new Error('الملف لا يحتوي على بيانات كافية')
+
+        const headers = rows[0].map((cell) =>
+          String(cell ?? '').trim().toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, '')
+        )
+        const barcodeColumnIndex = headers.findIndex((header) =>
+          ['باركود', 'الباركود', 'barcode', 'ean', 'upc', 'sku', 'كودالصنف', 'كودالمنتج'].some((k) => header.includes(k))
+        )
+
+        let detectedColumn = barcodeColumnIndex
+        if (detectedColumn === -1) {
+          const maxColumns = Math.max(...rows.slice(0, 50).map((row) => row.length), 0)
+          let bestColumn = 0
+          let bestScore = -1
+          for (let col = 0; col < maxColumns; col++) {
+            let score = 0
+            for (const row of rows.slice(1, 101)) {
+              const value = normalizeBarcode(row[col])
+              if (value && /^\d{6,}$/.test(value)) score++
+            }
+            if (score > bestScore) {
+              bestScore = score
+              bestColumn = col
+            }
+          }
+          detectedColumn = bestColumn
+        }
+
+        const barcodes = Array.from(
+          new Set(rows.slice(1).map((row) => normalizeBarcode(row[detectedColumn])).filter(Boolean))
+        )
+        if (barcodes.length === 0) throw new Error('لم يتم العثور على أي باركود صالح داخل الملف')
+
+        const itemMap = new Map<string, OfferItem>()
+        for (const item of allItems) {
+          const normalized = normalizeBarcode(item.barcode)
+          if (normalized && !itemMap.has(normalized)) itemMap.set(normalized, item)
+        }
+
+        const matched: OfferItem[] = []
+        const notFound: string[] = []
+        for (const barcode of barcodes) {
+          const item = itemMap.get(barcode)
+          if (item) matched.push(item)
+          else notFound.push(barcode)
+        }
+
+        setExcelTotalRead(barcodes.length)
+        setExcelMatchedItems(matched)
+        setExcelUnmatchedBarcodes(notFound)
+
+        const columnName = barcodeColumnIndex !== -1 && rows[0][detectedColumn] ? ` من عمود "${rows[0][detectedColumn]}"` : ''
+        setStatus(
+          `تم قراءة ${barcodes.length} باركود${columnName} — ${matched.length} له عرض حالياً` +
+          (notFound.length > 0 ? ` — ${notFound.length} غير مطابق` : '')
+        )
+      } catch (err: any) {
+        setExcelMatchedItems([])
+        setExcelUnmatchedBarcodes([])
+        setExcelTotalRead(null)
+        setStatus(`تعذر قراءة الملف: ${err?.message || 'خطأ غير معروف'}`)
+      } finally {
+        setExcelUploading(false)
+        e.target.value = ''
+      }
+    }
+    reader.onerror = () => {
+      setExcelUploading(false)
+      e.target.value = ''
+      setStatus('حدث خطأ أثناء قراءة ملف الإكسل')
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  const handleAddExcelResultsToQueue = () => {
+    if (excelMatchedItems.length === 0) return
+    setPrintQueue((prev) => {
+      const existingIds = new Set(prev.map((i) => i.id))
+      const newOnes = excelMatchedItems.filter((m) => !existingIds.has(m.id))
+      return [...prev, ...newOnes]
+    })
+    setStatus(`تمت إضافة ${excelMatchedItems.length} منتج لقائمة الطباعة`)
+  }
+
+  const handleDownloadAllExcel = () => {
+    if (allItems.length === 0) {
+      setStatus('لا توجد عروض حالياً')
       return
     }
-    wheelCooldownRef.current = true
-    setTimeout(() => {
-      wheelCooldownRef.current = false
-    }, 450)
+    downloadItemsAsExcel(allItems, 'كل_العروض')
+    setStatus(`تم تحميل ملف إكسل فيه ${allItems.length} منتج`)
   }
 
-  const fetchItems = async () => {
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('offer_items')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (!error && data) setItems(data)
-    setLoading(false)
-  }
+  const filteredItems = searchText.trim().length >= 1
+    ? allItems.filter((item) => item.barcode.includes(searchText.trim()) || item.product_name.includes(searchText.trim()))
+    : allItems
 
-  const fetchBatches = async () => {
-    const { data, error } = await supabase
-      .from('offer_batches')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (!error && data) setBatches(data)
-  }
+  // منتجات المكياج تُستثنى من الطباعة/التحميل الجماعي العام (نفس البراند، درجات مختلفة — ملصق واحد يكفيها)
+  const makeupItems = allItems.filter((item) => item.is_makeup)
+  const nonMakeupItems = allItems.filter((item) => !item.is_makeup)
+  const filteredMakeupItems = makeupSearchText.trim().length >= 1
+    ? makeupItems.filter((item) => item.barcode.includes(makeupSearchText.trim()) || item.product_name.includes(makeupSearchText.trim()))
+    : makeupItems
 
-  const fetchBranches = async () => {
-    const { data } = await supabase.from('branches').select('id, name, manager_phone').order('name')
-    if (data) setBranches(data)
-  }
+  useEffect(() => {
+    if (!status) return
+    const timer = setTimeout(() => setStatus(''), 4000)
+    return () => clearTimeout(timer)
+  }, [status])
 
-  const fetchMessages = async () => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50)
-    if (data) setMessages(data)
-  }
+  // البانر الأخضر "الملف جاهز" يقفل تلقائياً لو المستخدم نسى يضغط عليه أو يسكره
+  useEffect(() => {
+    if (readyDownloads.length === 0) return
+    const timer = setTimeout(() => setReadyDownloads([]), 60000)
+    return () => clearTimeout(timer)
+  }, [readyDownloads])
 
-  const fetchActivityLogs = async () => {
-    const { data } = await supabase
-      .from('activity_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100)
-    if (data) setActivityLogs(data)
-  }
-
-  const logActivity = async (action: string, referenceId?: string, details?: string) => {
-    await supabase.from('activity_logs').insert([{
-      branch_id: null,
-      actor_role: 'admin',
-      action,
-      reference_id: referenceId || null,
-      details: details || null,
-    }])
-  }
-
-  const fetchConfirmations = async () => {
-    const { data: activations } = await supabase.from('branch_batch_confirmations').select('branch_id, batch_id')
-    const { data: removals } = await supabase.from('branch_cancel_confirmations').select('branch_id, batch_id')
-
-    const actMap: Record<string, Set<string>> = {}
-    activations?.forEach((row) => {
-      if (!actMap[row.batch_id]) actMap[row.batch_id] = new Set()
-      actMap[row.batch_id].add(row.branch_id)
-    })
-    setActivationMap(actMap)
-
-    const remMap: Record<string, Set<string>> = {}
-    removals?.forEach((row) => {
-      if (!remMap[row.batch_id]) remMap[row.batch_id] = new Set()
-      remMap[row.batch_id].add(row.branch_id)
-    })
-    setRemovalMap(remMap)
-  }
-
-  // معاينة قالب الملصق — نتحقق ببساطة إن الصورة فعلاً تفتح (HEAD request) بدون أي مكتبة معقدة
-  const refreshLabelPreview = async () => {
-    const { data } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
-    const url = `${data.publicUrl}?t=${Date.now()}`
-    try {
-      const res = await fetch(url, { method: 'HEAD' })
-      if (res.ok) {
-        setLabelPreviewUrl(url)
-        setLabelExists(true)
-      } else {
-        setLabelPreviewUrl(null)
-        setLabelExists(false)
+  // التشييك الدوري محفوظ محلياً بهذا الجهاز بس (ما يشتركه أي جهاز ثاني)
+  useEffect(() => {
+    const savedChecks = localStorage.getItem('print_periodic_checks')
+    if (savedChecks) {
+      try {
+        setPeriodicChecks(JSON.parse(savedChecks))
+      } catch {
+        localStorage.removeItem('print_periodic_checks')
       }
-    } catch {
-      setLabelPreviewUrl(null)
-      setLabelExists(false)
     }
+    const savedUnavailable = localStorage.getItem('print_periodic_unavailable')
+    if (savedUnavailable) {
+      try {
+        setPeriodicUnavailable(JSON.parse(savedUnavailable))
+      } catch {
+        localStorage.removeItem('print_periodic_unavailable')
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('print_periodic_checks', JSON.stringify(periodicChecks))
+  }, [periodicChecks])
+
+  useEffect(() => {
+    localStorage.setItem('print_periodic_unavailable', JSON.stringify(periodicUnavailable))
+  }, [periodicUnavailable])
+
+  const togglePeriodicCheck = (barcode: string) => {
+    setPeriodicChecks((prev) => ({ ...prev, [barcode]: !prev[barcode] }))
+  }
+
+  const togglePeriodicUnavailable = (barcode: string) => {
+    setPeriodicUnavailable((prev) => ({ ...prev, [barcode]: !prev[barcode] }))
+  }
+
+  const handleStartNewPeriodicRound = () => {
+    const confirmed = window.confirm('بتبدأ دورة تشييك جديدة — كل العلامات ترجع فاضية من جديد على هذا الجهاز. متأكد؟')
+    if (!confirmed) return
+    setPeriodicChecks({})
+  }
+
+  // نستثني "غير المتوفر بفرعي" من العدّاد — النسبة تحسب بس على المنتجات المتوفرة فعلاً
+  const periodicRelevantItems = allItems.filter((item) => !periodicUnavailable[item.barcode])
+  const periodicCheckedCount = periodicRelevantItems.filter((item) => periodicChecks[item.barcode]).length
+
+  const fetchOffers = async () => {
+    const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
+    if (data) setAllItems(data.filter((i) => i.is_active !== false))
   }
 
   useEffect(() => {
-    fetchItems()
-    fetchBatches()
-    fetchBranches()
-    fetchMessages()
-    fetchConfirmations()
-    fetchActivityLogs()
-    refreshLabelPreview()
+    fetchOffers()
+
+    const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = `${bgData.publicUrl}?t=${Date.now()}`
+    img.onload = () => {
+      bgImageRef.current = img
+      setBgReady(true)
+    }
+    img.onerror = () => setBgReady(false)
 
     const channel = supabase
-      .channel('admin-page-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
-        fetchMessages()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'branch_batch_confirmations' }, () => {
-        fetchConfirmations()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'branch_cancel_confirmations' }, () => {
-        fetchConfirmations()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_logs' }, () => {
-        fetchActivityLogs()
-      })
+      .channel('print-general-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'offer_items' }, () => fetchOffers())
       .subscribe()
 
     return () => {
@@ -319,1409 +331,1081 @@ export default function AdminPage() {
     }
   }, [])
 
-  useEffect(() => {
-    if (activeSection !== 'messages') return
-    const unreadIds = messages.filter((m) => m.sender_role === 'branch' && !m.is_read).map((m) => m.id)
-    if (unreadIds.length === 0) return
-    supabase
-      .from('messages')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .in('id', unreadIds)
-      .then(() => {
-        setMessages((prev) => prev.map((m) => (unreadIds.includes(m.id) ? { ...m, is_read: true } : m)))
-      })
-  }, [activeSection, messages])
+  // ========================================
+  // توليد الملصقات — بنفس الطريقة تماماً بدون فرق بين "مفرد" و"جماعي"
+  // (نفس السطور، نفس الترتيب، الفرق الوحيد إنه بحلقة تكرار)
+  // ========================================
+  const renderLabelCanvas = async (
+    data: LabelData,
+    scale: number = SCALE,
+    bgOverride?: HTMLImageElement | HTMLCanvasElement | null
+  ): Promise<HTMLCanvasElement> => {
+    const canvas = document.createElement('canvas')
+    canvas.width = REF_W * scale
+    canvas.height = REF_H * scale
+    const ctx = canvas.getContext('2d')!
+    ctx.textBaseline = 'middle'
 
-  const activeItemsList = useMemo(() => items.filter((i) => i.is_active !== false), [items])
-  const cancelledItemsList = useMemo(() => items.filter((i) => i.is_active === false), [items])
-  const cancelledCount = cancelledItemsList.length
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  const visibleItems = useMemo(() => {
-    if (tableFilter === 'active') return activeItemsList
-    if (tableFilter === 'cancelled') return cancelledItemsList
-    return items
-  }, [tableFilter, items, activeItemsList, cancelledItemsList])
+    const bg = bgOverride !== undefined ? bgOverride : bgImageRef.current
+    if (bg) ctx.drawImage(bg, 0, 0, canvas.width, canvas.height)
 
-  const searchedItems = useMemo(() => {
-    const q = tableSearchQuery.trim()
-    if (!q) return visibleItems
-    return visibleItems.filter((i) => i.barcode.includes(q) || i.product_name.includes(q))
-  }, [visibleItems, tableSearchQuery])
+    ctx.textAlign = 'center'
+    ctx.direction = 'rtl' as any
 
-  const avgDiscount = useMemo(() => {
-    if (activeItemsList.length === 0) return 0
-    const total = activeItemsList.reduce((sum, item) => {
-      if (!item.previous_price) return sum
-      return sum + (1 - item.offer_price / item.previous_price)
-    }, 0)
-    return Math.round((total / activeItemsList.length) * 100)
-  }, [activeItemsList])
+    ctx.font = `900 ${POS.offerPrice.fontPx * scale}px Tajawal`
+    ctx.fillStyle = NAVY
+    ctx.fillText(data.offerPriceText, canvas.width * POS.offerPrice.xFrac, canvas.height * POS.offerPrice.yFrac)
 
-  const totalPages = Math.max(1, Math.ceil(searchedItems.length / pageSize))
-  const paginatedItems = searchedItems.slice((page - 1) * pageSize, page * pageSize)
+    ctx.font = `700 ${POS.prevPrice.fontPx * scale}px Tajawal`
+    ctx.fillStyle = RED
+    const prevX = canvas.width * POS.prevPrice.xFrac
+    const prevY = canvas.height * POS.prevPrice.yFrac
+    ctx.fillText(data.prevPriceText, prevX, prevY)
+    const prevWidth = ctx.measureText(data.prevPriceText).width
+    ctx.beginPath()
+    ctx.strokeStyle = RED
+    ctx.lineWidth = 3 * scale
+    ctx.moveTo(prevX - prevWidth / 2, prevY)
+    ctx.lineTo(prevX + prevWidth / 2, prevY)
+    ctx.stroke()
 
-  useEffect(() => {
-    setPage(1)
-    setSelectedIds(new Set())
-  }, [pageSize, visibleItems.length, tableFilter, tableSearchQuery])
-
-  const itemsForBatch = (batch: OfferBatch) => {
-    return batch.batch_type === 'new'
-      ? items.filter((i) => i.batch_id === batch.id)
-      : items.filter((i) => i.cancelled_batch_id === batch.id)
-  }
-
-  const branchName = (id: string | null) => {
-    if (!id) return null
-    return branches.find((b) => b.id === id)?.name || 'فرع غير معروف'
-  }
-
-  const handleDownloadCancelled = () => {
-    if (cancelledItemsList.length === 0) {
-      setStatus('ما فيه عروض ملغاة حالياً')
-      return
-    }
-    downloadItemsAsExcel(cancelledItemsList, 'عروض_ملغاة')
-  }
-
-  const handleSelectUpdateFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setPendingFile(file)
-    setBatchLabel(stripExtension(file.name))
-  }
-
-  const handleConfirmUpload = () => {
-    if (!pendingFile) return
-    const reader = new FileReader()
-    reader.onload = async (event) => {
-      const data = event.target?.result
-      const workbook = XLSX.read(data, { type: 'binary' })
-      const sheetName = workbook.SheetNames[0]
-      const sheet = workbook.Sheets[sheetName]
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 })
-      const rawParsedItems = rows.slice(1)
-        .filter((row) => row.length >= 4 && row[0])
-        .map((row) => ({
-          barcode: String(row[0]).trim(),
-          product_name: String(row[1]).trim(),
-          previous_price: Number(row[2]),
-          offer_price: Number(row[3]),
-        }))
-
-      const dedupedMap = new Map<string, typeof rawParsedItems[0]>()
-      rawParsedItems.forEach((item) => dedupedMap.set(item.barcode, item))
-      const parsedItems = Array.from(dedupedMap.values())
-      const duplicatesInFile = rawParsedItems.length - parsedItems.length
-
-      setUploading(true)
-      setStatus(`جاري إنشاء التحديث "${batchLabel}"...`)
-
-      const { data: batchData, error: batchError } = await supabase
-        .from('offer_batches')
-        .insert([{ label: batchLabel || stripExtension(pendingFile.name), batch_type: 'new' }])
-        .select()
-        .single()
-
-      if (batchError || !batchData) {
-        setUploading(false)
-        setStatus(`خطأ بإنشاء التحديث: ${batchError?.message}`)
-        return
-      }
-
-      const itemsWithBatch = parsedItems.map((item) => ({
-        ...item,
-        batch_id: batchData.id,
-        is_active: true,
-        cancelled_batch_id: null,
-        is_makeup: isMakeupBatch,
-      }))
-
-      const { error } = await supabase
-        .from('offer_items')
-        .upsert(itemsWithBatch, { onConflict: 'barcode' })
-
-      setUploading(false)
-
-      if (error) {
-        setStatus(`خطأ: ${error.message}`)
+    ctx.font = `700 ${POS.name.fontPx * scale}px Tajawal`
+    ctx.fillStyle = NAVY
+    const maxWidth = canvas.width * 0.82
+    const words = data.name.split(' ')
+    const lines: string[] = []
+    let currentLine = ''
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word
+      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+        lines.push(currentLine)
+        currentLine = word
       } else {
-        setStatus(
-          `تم حفظ ${parsedItems.length} منتج ضمن "${batchLabel}"` +
-          (isMakeupBatch ? ' (فئة مكياج)' : '') +
-          (duplicatesInFile > 0 ? ` — تم تجاهل ${duplicatesInFile} صف مكرر بنفس الباركود داخل الملف` : '')
+        currentLine = testLine
+      }
+    }
+    if (currentLine) lines.push(currentLine)
+    const nameLines = lines.slice(0, 2)
+    const lineSpacing = POS.name.lineSpacingPx * scale
+    const startY = canvas.height * POS.name.yFrac - ((nameLines.length - 1) * lineSpacing) / 2
+    nameLines.forEach((line, i) => {
+      ctx.fillText(line, canvas.width * POS.name.xFrac, startY + i * lineSpacing)
+    })
+
+    ctx.font = `700 ${POS.barcode.fontPx * scale}px Tajawal`
+    ctx.fillStyle = RED
+    ctx.fillText(data.barcodeText, canvas.width * POS.barcode.xFrac, canvas.height * POS.barcode.yFrac)
+
+    return canvas
+  }
+
+  // نشتق خلفية مصغّرة من نفس الخلفية الأصلية اللي نجحت فعلاً من أول تحميل للصفحة
+  // (بدل ما نستدعي مكتبة قراءة PDF من جديد كل مرة — تصغير كانفاس عادي، عملية موثوقة 100%)
+  const getScaledBackground = (scale: number): HTMLCanvasElement | HTMLImageElement | null => {
+    if (!bgImageRef.current) return null
+    if (scale === SCALE) return bgImageRef.current
+    const canvas = document.createElement('canvas')
+    canvas.width = REF_W * scale
+    canvas.height = REF_H * scale
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height)
+    return canvas
+  }
+
+  // دالة توليد وحيدة يستخدمها كل شي (مفرد، متعدد، الكل) — بدون أي تفريع منطق
+  // ما فيه ضغط PDF، ما فيه JPEG، ما فيه تمرير مقاس مخصص لـ addPage — أبسط شكل ممكن لـ jsPDF
+  const generatePdf = async (
+    items: OfferItem[],
+    scale: number,
+    onProgress?: (msg: string) => void
+  ): Promise<jsPDF> => {
+    const bg = getScaledBackground(scale)
+
+    // فحص فوري: نتأكد الخلفية نفسها ما تسبب مشكلة "Tainted Canvas" (خطأ أمني معروف
+    // يصير لما صورة بمصدر خارجي تلوّث الكانفاس، ويصير أي تصدير بعدها يفشل بصمت)
+    if (bg) {
+      const testCanvas = document.createElement('canvas')
+      testCanvas.width = 10
+      testCanvas.height = 10
+      const testCtx = testCanvas.getContext('2d')!
+      testCtx.drawImage(bg, 0, 0, 10, 10)
+      try {
+        testCanvas.toDataURL()
+      } catch (taintErr: any) {
+        throw new Error(
+          `مشكلة تلوّث الكانفاس (Tainted Canvas) — الخلفية جاية من مصدر يمنع تصديرها: ${taintErr?.message || taintErr}`
         )
-        setPendingFile(null)
-        setBatchLabel('')
-        setIsMakeupBatch(false)
-        logActivity('رفع تحديث جديد', batchData.id, `${batchLabel} — ${parsedItems.length} منتج${isMakeupBatch ? ' (مكياج)' : ''}`)
-        fetchItems()
-        fetchBatches()
       }
     }
-    reader.readAsBinaryString(pendingFile)
-  }
 
-  const handleSelectCancelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setPendingCancelFile(file)
-    setCancelBatchLabel(`إلغاء ${stripExtension(file.name)}`)
-  }
+    const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
 
-  const handleConfirmCancelUpload = () => {
-    if (!pendingCancelFile) return
-    const reader = new FileReader()
-    reader.onload = async (event) => {
-      const data = event.target?.result
-      const workbook = XLSX.read(data, { type: 'binary' })
-      const sheetName = workbook.SheetNames[0]
-      const sheet = workbook.Sheets[sheetName]
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 })
-      const barcodesToCancel = rows
-        .slice(1)
-        .filter((row) => row.length >= 1 && row[0])
-        .map((row) => String(row[0]).trim())
-
-      if (barcodesToCancel.length === 0) {
-        setStatus('الملف فاضي أو مافيه باركودات')
-        return
+    for (let i = 0; i < items.length; i++) {
+      if (onProgress) {
+        onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
       }
-
-      setUploadingCancel(true)
-      setStatus(`جاري إلغاء ${barcodesToCancel.length} منتج...`)
-
-      const { data: batchData, error: batchError } = await supabase
-        .from('offer_batches')
-        .insert([{ label: cancelBatchLabel || `إلغاء ${stripExtension(pendingCancelFile.name)}`, batch_type: 'cancel' }])
-        .select()
-        .single()
-
-      if (batchError || !batchData) {
-        setUploadingCancel(false)
-        setStatus(`خطأ بإنشاء الإلغاء: ${batchError?.message}`)
-        return
+      let canvas: HTMLCanvasElement
+      try {
+        canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
+      } catch (renderErr: any) {
+        throw new Error(`فشل رسم الملصق رقم ${i + 1} (${items[i].barcode}): ${renderErr?.message || renderErr}`)
       }
-
-      const { error } = await supabase
-        .from('offer_items')
-        .update({ is_active: false, cancelled_batch_id: batchData.id })
-        .in('barcode', barcodesToCancel)
-
-      setUploadingCancel(false)
-
-      if (error) {
-        setStatus(`خطأ: ${error.message}`)
-      } else {
-        setStatus(`تم إلغاء ${barcodesToCancel.length} منتج ضمن "${cancelBatchLabel}"`)
-        setPendingCancelFile(null)
-        setCancelBatchLabel('')
-        logActivity('رفع تحديث إلغاء', batchData.id, `${cancelBatchLabel} — ${barcodesToCancel.length} منتج`)
-        fetchItems()
-        fetchBatches()
+      if (i > 0) doc.addPage()
+      try {
+        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+      } catch (embedErr: any) {
+        throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
       }
     }
-    reader.readAsBinaryString(pendingCancelFile)
+
+    return doc
   }
 
-  // رفع قالب الملصق كصورة PNG (بسيط ومضمون التوافق مع كل المتصفحات)
-  const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadingBg(true)
-    setStatus('جاري رفع قالب الملصق...')
-    const { error: uploadError } = await supabase.storage
-      .from('label-assets')
-      .upload('label-bg.png', file, { upsert: true, contentType: file.type || 'image/png' })
-    setUploadingBg(false)
-    if (uploadError) {
-      setStatus(`خطأ برفع القالب: ${uploadError.message}`)
-    } else {
-      setStatus('تم تحديث قالب الملصق بنجاح')
-      refreshLabelPreview()
-    }
-  }
+  const BULK_CHUNK_SIZE = 100
 
-  const handleDeleteBackground = async () => {
-    askConfirm('متأكد إنك تبي تحذف قالب الملصق الحالي؟ الفروع ما بيقدروا يطبعوا ملصقات لين ترفع وحدة بديلة.', async () => {
-      const { error } = await supabase.storage.from('label-assets').remove(['label-bg.png'])
-      if (error) {
-        setStatus(`خطأ بالحذف: ${error.message}`)
-      } else {
-        setStatus('تم حذف قالب الملصق')
-        refreshLabelPreview()
-      }
+  // يولّد جزء واحد بس بكل مرة (بدل كل الأجزاء دفعة وحدة) — يمنع تراكم الذاكرة وتجمد المتصفح
+  const generateBulkChunk = async (
+    items: OfferItem[],
+    baseFilename: string,
+    chunkIndex: number,
+    totalChunks: number
+  ) => {
+    setGeneratingChunk(true)
+    // نحرر ذاكرة الملف السابق فوراً قبل توليد الجزء الجديد
+    readyDownloads.forEach((d) => {
+      try {
+        URL.revokeObjectURL(d.url)
+      } catch {}
     })
-  }
-
-  const handleAddManual = async () => {
-    if (!newBarcode || !newName || !newPrevPrice || !newOfferPrice) {
-      setStatus('عبّي كل الحقول أول')
-      return
-    }
-    const { error } = await supabase.from('offer_items').upsert(
-      [{
-        barcode: newBarcode.trim(),
-        product_name: newName.trim(),
-        previous_price: Number(newPrevPrice),
-        offer_price: Number(newOfferPrice),
-        is_active: true,
-      }],
-      { onConflict: 'barcode' }
-    )
-    if (error) {
-      setStatus(`خطأ: ${error.message}`)
-    } else {
-      setStatus('تمت الإضافة بنجاح')
-      setNewBarcode('')
-      setNewName('')
-      setNewPrevPrice('')
-      setNewOfferPrice('')
-      fetchItems()
-    }
-  }
-
-  const handleReactivate = async (id: string) => {
-    const { error } = await supabase.from('offer_items').update({ is_active: true, cancelled_batch_id: null }).eq('id', id)
-    if (!error) fetchItems()
-  }
-
-  const handleDelete = async (id: string) => {
-    askConfirm('متأكد إنك تبي تحذف هذا المنتج نهائياً؟', async () => {
-      const { error } = await supabase.from('offer_items').delete().eq('id', id)
-      if (error) {
-        setStatus(`خطأ بالحذف: ${error.message}`)
-      } else {
-        setItems((prev) => prev.filter((item) => item.id !== id))
-      }
-    })
-  }
-
-  const handleStartEdit = (item: OfferItem) => {
-    setEditingId(item.id!)
-    setEditName(item.product_name)
-    setEditPrevPrice(String(item.previous_price))
-    setEditOfferPrice(String(item.offer_price))
-    setEditIsMakeup(!!item.is_makeup)
-  }
-
-  const handleCancelEdit = () => {
-    setEditingId(null)
-    setEditName('')
-    setEditPrevPrice('')
-    setEditOfferPrice('')
-    setEditIsMakeup(false)
-  }
-
-  const handleSaveEdit = async (id: string) => {
-    const name = editName.trim()
-    const prev = Number(editPrevPrice)
-    const offer = Number(editOfferPrice)
-    if (!name) {
-      setStatus('اسم المنتج ما يصير فاضي')
-      return
-    }
-    if (isNaN(prev) || isNaN(offer) || prev < 0 || offer < 0) {
-      setStatus('تأكد إن السعرين أرقام صحيحة')
-      return
-    }
-    setSavingEdit(true)
-    const { error } = await supabase
-      .from('offer_items')
-      .update({ product_name: name, previous_price: prev, offer_price: offer, is_makeup: editIsMakeup })
-      .eq('id', id)
-    setSavingEdit(false)
-
-    if (error) {
-      setStatus(`خطأ بالتعديل: ${error.message}`)
-    } else {
-      setItems((prevItems) =>
-        prevItems.map((item) => (item.id === id ? { ...item, product_name: name, previous_price: prev, offer_price: offer, is_makeup: editIsMakeup } : item))
-      )
-      setStatus('تم تعديل المنتج بنجاح')
-      logActivity('تعديل منتج', id)
-      handleCancelEdit()
-    }
-  }
-
-  const toggleSelectItem = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const toggleSelectAllOnPage = () => {
-    const pageIds = paginatedItems.map((i) => i.id!).filter(Boolean)
-    const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id))
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (allSelected) {
-        pageIds.forEach((id) => next.delete(id))
-      } else {
-        pageIds.forEach((id) => next.add(id))
-      }
-      return next
-    })
-  }
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return
-    askConfirm(`متأكد إنك تبي تحذف ${selectedIds.size} منتج نهائياً؟ هذا الإجراء ما يُرجع.`, async () => {
-      const idsArray = Array.from(selectedIds)
-      const CHUNK_SIZE = 150
-      let deletedCount = 0
-      let failedChunk = false
-
-      for (let i = 0; i < idsArray.length; i += CHUNK_SIZE) {
-        const chunk = idsArray.slice(i, i + CHUNK_SIZE)
-        const { error } = await supabase.from('offer_items').delete().in('id', chunk)
-        if (error) {
-          setStatus(`خطأ بالحذف الجماعي (بعد حذف ${deletedCount} منتج): ${error.message}`)
-          failedChunk = true
-          break
-        }
-        deletedCount += chunk.length
-      }
-
-      const deletedIds = new Set(idsArray.slice(0, deletedCount))
-      setItems((prev) => prev.filter((item) => !deletedIds.has(item.id!)))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        deletedIds.forEach((id) => next.delete(id))
-        return next
-      })
-
-      if (!failedChunk) {
-        setStatus(`تم حذف ${deletedCount} منتج بنجاح`)
-      }
-    })
-  }
-
-  const handleDeleteBatch = async (batch: OfferBatch) => {
-    const batchItems = itemsForBatch(batch)
-    const itemsCount = batchItems.length
-    askConfirm(
-      `متأكد إنك تبي تحذف تحديث "${batch.label}" بالكامل؟\nبيتم حذف ${itemsCount} منتج مرتبط فيه نهائياً من كل الفروع، وهذا الإجراء ما يُرجع.`,
-      async () => {
-        const deleteColumn = batch.batch_type === 'new' ? 'batch_id' : 'cancelled_batch_id'
-        const { error: itemsError } = await supabase
-          .from('offer_items')
-          .delete()
-          .eq(deleteColumn, batch.id)
-
-        if (itemsError) {
-          setStatus(`خطأ بحذف منتجات التحديث: ${itemsError.message}`)
-          return
-        }
-
-        if (batch.batch_type === 'new') {
-          await supabase.from('branch_batch_confirmations').delete().eq('batch_id', batch.id)
-        } else {
-          await supabase.from('branch_cancel_confirmations').delete().eq('batch_id', batch.id)
-        }
-
-        const { error: batchError } = await supabase.from('offer_batches').delete().eq('id', batch.id)
-        if (batchError) {
-          setStatus(`خطأ بحذف التحديث: ${batchError.message}`)
-          return
-        }
-
-        setStatus(`تم حذف تحديث "${batch.label}" وكل منتجاته (${itemsCount}) نهائياً`)
-        fetchItems()
-        fetchBatches()
-        fetchConfirmations()
-      }
-    )
-  }
-
-  const handleFactoryReset = async () => {
-    setResettingFactory(true)
+    setReadyDownloads([])
     try {
-      await supabase.from('offer_items').delete().not('id', 'is', null)
-      await supabase.from('offer_batches').delete().not('id', 'is', null)
-      await supabase.from('branch_batch_confirmations').delete().not('id', 'is', null)
-      await supabase.from('branch_cancel_confirmations').delete().not('id', 'is', null)
-      await supabase.from('branch_barcodes').delete().not('id', 'is', null)
-      await supabase.from('label_checks').delete().not('id', 'is', null)
-      await supabase.from('messages').delete().not('id', 'is', null)
-      await supabase.from('activity_logs').delete().not('id', 'is', null)
-      await supabase.storage.from('label-assets').remove(['label-bg.png', 'label-bg.pdf'])
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
 
-      setStatus('تمت التهيئة الكاملة بنجاح — النظام رجع فاضي زي أول تشغيل')
-      setFactoryResetInput('')
-      setShowFactoryResetModal(false)
-      fetchItems()
-      fetchBatches()
-      fetchMessages()
-      fetchActivityLogs()
-      fetchConfirmations()
-      refreshLabelPreview()
+      const chunkItems = items.slice(chunkIndex * BULK_CHUNK_SIZE, (chunkIndex + 1) * BULK_CHUNK_SIZE)
+      const doc = await generatePdf(chunkItems, BULK_SCALE, (msg) =>
+        setStatus(`(جزء ${chunkIndex + 1} من ${totalChunks}) ${msg}`)
+      )
+      const partSuffix = totalChunks > 1 ? `_جزء${chunkIndex + 1}من${totalChunks}` : ''
+      const url = doc.output('bloburl') as unknown as string
+      setReadyDownloads([{ url, filename: `${baseFilename}${partSuffix}.pdf` }])
+      setBulkJob({ items, baseFilename, totalChunks, currentChunk: chunkIndex })
+      setStatus(`جهّزنا الجزء ${chunkIndex + 1} من ${totalChunks} (${chunkItems.length} ملصق) — اضغط زر التحميل تحت`)
     } catch (err: any) {
-      setStatus(`صار خطأ أثناء التهيئة: ${err?.message || 'غير معروف'}`)
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
-      setResettingFactory(false)
+      setGeneratingChunk(false)
     }
   }
 
-  const handleSendMessage = async () => {
-    if (!newMessageText.trim()) return
-    setSendingMessage(true)
-    const { error } = await supabase.from('messages').insert([{
-      sender_role: 'admin',
-      sender_branch_id: null,
-      target_branch_id: messageTarget || null,
-      body: newMessageText.trim(),
-    }])
-    setSendingMessage(false)
-    if (error) {
-      setStatus(`خطأ بالإرسال: ${error.message}`)
-    } else {
-      setNewMessageText('')
-      setStatus(messageTarget ? 'تم إرسال الرسالة للفرع المحدد' : 'تم إرسال الرسالة لكل الفروع')
-      logActivity('إرسال رسالة', messageTarget || undefined, messageTarget ? undefined : 'لكل الفروع')
-      fetchMessages()
+  const startBulkDownloadJob = async (items: OfferItem[], baseFilename: string) => {
+    if (items.length === 0) {
+      setStatus('لا توجد عروض لتحميلها')
+      return
+    }
+    const totalChunks = Math.ceil(items.length / BULK_CHUNK_SIZE)
+    await generateBulkChunk(items, baseFilename, 0, totalChunks)
+  }
+
+  const handleGenerateNextBulkChunk = () => {
+    if (!bulkJob) return
+    const nextIndex = bulkJob.currentChunk + 1
+    if (nextIndex >= bulkJob.totalChunks) return
+    generateBulkChunk(bulkJob.items, bulkJob.baseFilename, nextIndex, bulkJob.totalChunks)
+  }
+
+  const handleDownloadAllLabels = async () => {
+    if (nonMakeupItems.length === 0) {
+      setStatus('لا توجد عروض حالياً (غير المكياج)')
+      return
+    }
+    setDownloadsGenerating(true)
+    await startBulkDownloadJob(nonMakeupItems, 'ملصقات_كل_المنتجات')
+    setDownloadsGenerating(false)
+  }
+
+  const handleDownloadMakeupLabels = async () => {
+    setDownloadsGenerating(true)
+    await startBulkDownloadJob(makeupItems, 'ملصقات_المكياج')
+    setDownloadsGenerating(false)
+  }
+
+  const handleExcelAction = async (mode: 'download' | 'print') => {
+    if (excelMatchedItems.length === 0) {
+      setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
+      return
+    }
+    if (mode === 'download') {
+      setExcelGenerating(true)
+      await startBulkDownloadJob(excelMatchedItems, 'ملصقات_الملف_المرفوع')
+      setExcelGenerating(false)
+      return
+    }
+    const printWindow = window.open('', '_blank')
+    setExcelGenerating(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const doc = await generatePdf(excelMatchedItems, BULK_SCALE, setStatus)
+      doc.autoPrint()
+      const blobUrl = doc.output('bloburl')
+      if (printWindow) {
+        printWindow.location.href = blobUrl as unknown as string
+        setStatus('تم فتح نافذة الطباعة')
+      } else {
+        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setExcelGenerating(false)
     }
   }
 
-  const discountBadgeClass = (discount: number) => {
-    if (discount >= 20) return 'bg-emerald-100 text-emerald-700'
-    if (discount >= 10) return 'bg-[#FFC72C]/25 text-[#8a6300]'
-    return 'bg-rose-100 text-rose-700'
+  const handleQueueAction = async (mode: 'download' | 'print') => {
+    if (printQueue.length === 0) {
+      setStatus('قائمة الطباعة فاضية — أضف منتجات أول')
+      return
+    }
+    if (mode === 'download') {
+      setGeneratingQueue(true)
+      await startBulkDownloadJob(printQueue, 'ملصقات_مختارة')
+      setGeneratingQueue(false)
+      return
+    }
+    const printWindow = window.open('', '_blank')
+    setGeneratingQueue(true)
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
+      doc.autoPrint()
+      const blobUrl = doc.output('bloburl')
+      if (printWindow) {
+        printWindow.location.href = blobUrl as unknown as string
+        setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
+      } else {
+        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setGeneratingQueue(false)
+    }
   }
 
-  const goToTable = (filter: TableFilter) => {
-    setTableFilter(filter)
-    setActiveSection('table')
+  const handleCustomLabelAction = async (mode: 'download' | 'print') => {
+    if (!customName.trim() || !customPrevPrice || !customOfferPrice) {
+      setStatus('عبّي اسم المنتج والسعر السابق وسعر العرض أول')
+      return
+    }
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setCustomGenerating(true)
+    setStatus('جاري تجهيز الملصق المتنوع...')
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const data: LabelData = {
+        name: customName.trim(),
+        offerPriceText: Number(customOfferPrice).toFixed(2),
+        prevPriceText: Number(customPrevPrice).toFixed(2),
+        barcodeText: customNote.trim(),
+      }
+
+      const canvas = await renderLabelCanvas(data)
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+
+      if (mode === 'print') {
+        doc.autoPrint()
+        const blobUrl = doc.output('bloburl')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
+      } else {
+        doc.save(`ملصق_متنوع_${customName.trim()}.pdf`)
+        setStatus('تم تحميل الملصق المتنوع بنجاح')
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setCustomGenerating(false)
+    }
   }
 
-  const unreadFromBranches = messages.filter((m) => m.sender_role === 'branch' && !m.is_read).length
+  // أداة تشخيص مؤقتة: تعرض الرسمة الخام (Canvas) مباشرة كصورة، بدون أي PDF نهائياً
+  // هذا يوضح فوراً هل المشكلة بالرسم نفسه أو بتحويله لملف
+  const handleAction = async (item: OfferItem, mode: 'download' | 'print') => {
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setPrintingId(item.id)
+    setStatus('جاري تجهيز الملصق بأعلى جودة، لحظات...')
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const canvas = await renderLabelCanvas(itemToLabelData(item))
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+
+      if (mode === 'print') {
+        doc.autoPrint()
+        const blobUrl = doc.output('bloburl')
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
+      } else {
+        doc.save(`ملصق_${item.barcode}.pdf`)
+        setStatus('تم تحميل الملصق بنجاح')
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setPrintingId(null)
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
       <InstallPWAButton />
       <header className="bg-white border-b-4 border-[var(--navy)]">
-        <div className="max-w-7xl mx-auto px-6 md:px-10 py-4 flex items-center gap-4">
-          <img src="/logo.png" alt="شعار العروض" className="w-16 h-16 md:w-20 md:h-20 object-contain shrink-0" />
+        <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
+          <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
-            <p className="text-[var(--red)] text-xs font-bold">مركز التحكم</p>
-            <h1 className="text-[var(--navy)] text-xl md:text-2xl font-black">إدارة عروض المنتجات</h1>
+            <p className="text-[var(--red)] text-[11px] font-bold">واجهة الطباعة السريعة</p>
+            <h1 className="text-[var(--navy)] text-base font-black">عروض عامة</h1>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-10 py-6 md:py-8 flex flex-col md:flex-row gap-6 items-start">
-        <aside className="w-full md:w-72 md:shrink-0 md:sticky md:top-8 space-y-4">
-          <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <button
-                onClick={() => setActiveSection('messages')}
-                className="relative text-[var(--navy)]"
-              >
-                <Bell size={19} />
-                {unreadFromBranches > 0 && (
-                  <span className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-[var(--red)] text-white text-[9px] font-bold flex items-center justify-center">
-                    {unreadFromBranches}
-                  </span>
-                )}
-              </button>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-bold text-[var(--navy)]">مرحباً عبدالله</p>
-                <div className="w-9 h-9 rounded-full bg-[var(--navy)] flex items-center justify-center font-bold text-white text-sm">
-                  ع
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-            <p className="text-xs font-bold text-gray-400 mb-3">لوحة التحكم والعمليات</p>
+      <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 flex flex-col md:flex-row gap-4 md:gap-6 items-start">
+        <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6">
+          <div className="w-full grid grid-cols-2 md:flex md:flex-col gap-1.5 bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
             <button
-              onClick={() => goToTable('all')}
-              className="w-full flex items-center justify-between bg-[var(--navy)] text-white px-4 py-3 rounded-xl text-sm font-bold mb-4"
+              onClick={() => setActiveSection('general')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'general' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
             >
               <span className="flex items-center gap-2">
-                <LayoutGrid size={16} />
-                جميع العروض
+                <LayoutGrid size={15} />
+                كل العروض
               </span>
-              <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">{items.length}</span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{allItems.length}</span>
             </button>
-
-            <p className="text-xs font-bold text-gray-400 mb-2">الحالة والتقدم</p>
-            <div className="space-y-2 mb-4">
-              <button
-                onClick={() => goToTable('active')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                  tableFilter === 'active' && activeSection === 'table' ? 'bg-emerald-100 ring-2 ring-emerald-400' : 'bg-emerald-50 hover:bg-emerald-100'
-                }`}
-              >
-                <span className="flex items-center gap-2 text-sm font-bold text-emerald-700">
-                  <CheckCircle2 size={15} />
-                  نشطة
-                </span>
-                <span className="bg-emerald-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">{activeItemsList.length}</span>
-              </button>
-              <button
-                onClick={() => goToTable('cancelled')}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                  tableFilter === 'cancelled' && activeSection === 'table' ? 'bg-rose-100 ring-2 ring-rose-400' : 'bg-rose-50 hover:bg-rose-100'
-                }`}
-              >
-                <span className="flex items-center gap-2 text-sm font-bold text-[var(--red)]">
-                  <XCircle size={15} />
-                  ملغاة
-                </span>
-                <span className="bg-[var(--red)] text-white text-xs font-bold px-2 py-0.5 rounded-full">{cancelledCount}</span>
-              </button>
-            </div>
-
-            <p className="text-xs font-bold text-gray-400 mb-2">الأقسام</p>
-            <div className="space-y-1">
-              {SECTIONS.map((s) => {
-                const Icon = s.icon
-                const active = activeSection === s.id
-                const count =
-                  s.id === 'cancel' ? cancelledCount :
-                  s.id === 'history' ? batches.length :
-                  s.id === 'table' ? visibleItems.length :
-                  s.id === 'activity' ? activityLogs.length :
-                  s.id === 'messages' ? unreadFromBranches : null
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setActiveSection(s.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-colors ${
-                      active ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon size={15} />
-                      {s.label}
-                    </span>
-                    {count !== null && (
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                        s.id === 'messages' && unreadFromBranches > 0 ? 'bg-[var(--red)] text-white' : 'bg-gray-200 text-gray-600'
-                      }`}>
-                        {count}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
             <button
-              onClick={() => setActiveSection('settings')}
-              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={() => setActiveSection('custom')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'custom' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
             >
-              <Settings size={15} />
-              إعدادات الحساب
+              <Layers size={15} />
+              ملصق متنوع
             </button>
-            <button className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--red)] hover:bg-rose-50 transition-colors">
-              <LogOut size={15} />
-              تسجيل الخروج
+            <button
+              onClick={() => setActiveSection('excel')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'excel' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <UploadCloud size={15} />
+              رفع ملف إكسل
+            </button>
+            <button
+              onClick={() => setActiveSection('downloads')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'downloads' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Download size={15} />
+              التنزيلات
+            </button>
+            <button
+              onClick={() => setActiveSection('queue')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'queue' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Printer size={15} />
+                قائمة الطباعة
+              </span>
+              {printQueue.length > 0 && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{printQueue.length}</span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveSection('periodicCheck')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'periodicCheck' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <ClipboardCheck size={15} />
+                التشييك الدوري
+              </span>
+              {periodicCheckedCount > 0 && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{periodicCheckedCount}/{allItems.length}</span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveSection('makeup')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'makeup' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Layers size={15} />
+                مكياج
+              </span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-pink-200 text-pink-700">{makeupItems.length}</span>
             </button>
           </div>
         </aside>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 w-full space-y-4">
           {status && (
-            <div className="mb-6 p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
+            <div className="p-3.5 bg-[var(--yellow)]/15 border-2 border-[var(--yellow)]/40 rounded-lg text-sm text-[#8a6300] font-bold">
               {status}
             </div>
           )}
 
-          {activeSection === 'stats' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <button onClick={() => goToTable('active')} className="text-right rounded-2xl p-6 bg-[var(--navy)] flex items-center justify-between shadow-lg shadow-[var(--navy)]/20 hover:opacity-90 transition-opacity">
-                <div className="w-14 h-14 rounded-xl bg-white/15 flex items-center justify-center text-white shrink-0">
-                  <Package size={24} />
-                </div>
-                <div className="text-left">
-                  <p className="text-3xl font-black text-white">{activeItemsList.length}</p>
-                  <p className="text-sm text-white/80 font-bold">عروض نشطة</p>
-                </div>
+          {readyDownloads.length > 0 && (
+            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-lg space-y-2 relative">
+              <button
+                onClick={() => {
+                  setReadyDownloads([])
+                  setBulkJob(null)
+                }}
+                className="absolute top-3 left-3 text-emerald-700 hover:text-emerald-900"
+                title="إغلاق"
+              >
+                <X size={16} />
               </button>
-
-              <button onClick={() => goToTable('cancelled')} className="text-right rounded-2xl p-6 bg-[var(--red)] flex items-center justify-between shadow-lg shadow-[var(--red)]/20 hover:opacity-90 transition-opacity">
-                <div className="w-14 h-14 rounded-xl bg-white/15 flex items-center justify-center text-white shrink-0">
-                  <XCircle size={24} />
-                </div>
-                <div className="text-left">
-                  <p className="text-3xl font-black text-white">{cancelledCount}</p>
-                  <p className="text-sm text-white/80 font-bold">عروض ملغاة</p>
-                </div>
-              </button>
-
-              <div className="rounded-2xl p-6 bg-[var(--yellow)] flex items-center justify-between shadow-lg shadow-[var(--yellow)]/30">
-                <div className="w-14 h-14 rounded-xl bg-white/40 flex items-center justify-center text-[var(--navy)] shrink-0">
-                  <TrendingUp size={24} />
-                </div>
-                <div className="text-left">
-                  <p className="text-3xl font-black text-[var(--navy)]">{avgDiscount}%</p>
-                  <p className="text-sm text-[var(--navy)]/80 font-bold">متوسط نسبة الخصم</p>
-                </div>
+              <p className="text-sm text-emerald-800 font-bold pl-6">
+                ✅ {bulkJob ? `الجزء ${bulkJob.currentChunk + 1} من ${bulkJob.totalChunks} جاهز` : 'الملف جاهز'} — اضغط للتحميل
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {readyDownloads.map((d, idx) => (
+                  <a
+                    key={idx}
+                    href={d.url}
+                    download={d.filename}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    <Download size={14} />
+                    تحميل هذا الجزء
+                  </a>
+                ))}
+                {bulkJob && bulkJob.currentChunk + 1 < bulkJob.totalChunks && (
+                  <button
+                    onClick={handleGenerateNextBulkChunk}
+                    disabled={generatingChunk}
+                    className="flex items-center gap-1.5 bg-white border-2 border-emerald-500 hover:bg-emerald-100 text-emerald-700 text-sm font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {generatingChunk ? 'جاري التوليد...' : `توليد الجزء التالي (${bulkJob.currentChunk + 2} من ${bulkJob.totalChunks})`}
+                  </button>
+                )}
               </div>
             </div>
           )}
 
-          {activeSection === 'upload' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm max-w-xl">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="font-black text-sm text-[var(--navy)]">رفع تحديث عروض جديد</h2>
-                <UploadCloud size={16} className="text-[var(--navy)]" />
+          {activeSection === 'custom' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                <Layers size={16} />
+                ملصق متنوع
+              </h2>
+              <p className="text-xs text-gray-500 font-medium mb-4">
+                لأي حالة خاصة — تشكيلة نكهات أو أحجام بنفس السعر
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <input
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="اسم/عنوان المنتج"
+                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customPrevPrice}
+                  onChange={(e) => setCustomPrevPrice(e.target.value)}
+                  type="number"
+                  placeholder="السعر السابق"
+                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customOfferPrice}
+                  onChange={(e) => setCustomOfferPrice(e.target.value)}
+                  type="number"
+                  placeholder="سعر العرض"
+                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
+                <input
+                  value={customNote}
+                  onChange={(e) => setCustomNote(e.target.value)}
+                  placeholder="ملاحظة مكان الباركود (اختياري)"
+                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                />
               </div>
-              <p className="text-xs text-gray-600 font-medium mb-3">باركود، اسم المنتج، السعر السابق، سعر العرض</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleCustomLabelAction('download')}
+                  disabled={customGenerating}
+                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <Download size={13} />
+                  تحميل
+                </button>
+                <button
+                  onClick={() => handleCustomLabelAction('print')}
+                  disabled={customGenerating}
+                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <Printer size={13} />
+                  {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+                </button>
+              </div>
+            </div>
+          )}
 
-              {!pendingFile ? (
-                <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[var(--navy)]/25 rounded-xl p-6 cursor-pointer hover:border-[var(--navy)] hover:bg-[var(--navy)]/5 transition-colors">
-                  <UploadCloud size={22} className="text-[var(--navy)]" />
-                  <span className="text-[var(--navy)] font-bold text-sm">اختر ملف Excel</span>
-                  <span className="mt-1 bg-[var(--navy)] text-white text-xs font-bold px-4 py-1.5 rounded-lg">
-                    استعراض الملفات
+          {activeSection === 'excel' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+                <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                  <UploadCloud size={16} />
+                  رفع ملف إكسل باركودات
+                </h2>
+                <p className="text-xs text-gray-500 font-medium mb-4">
+                  ارفع أي ملف Excel فيه عمود باركودات (أي فرع أو أي مصدر)، ونطابقها تلقائياً مع العروض الحالية
+                </p>
+                <label className="flex items-center justify-center gap-2 border-2 border-dashed border-[var(--navy)]/25 rounded-xl p-6 cursor-pointer hover:border-[var(--navy)] hover:bg-[var(--navy)]/5 transition-colors">
+                  <UploadCloud size={20} className="text-[var(--navy)]" />
+                  <span className="text-[var(--navy)] font-bold text-sm">
+                    {excelUploading ? 'جاري القراءة...' : 'اختر ملف Excel'}
                   </span>
-                  <input type="file" accept=".xlsx,.xls" onChange={handleSelectUpdateFile} className="hidden" />
+                  <input type="file" accept=".xlsx,.xls" onChange={handleExcelFileUpload} className="hidden" disabled={excelUploading} />
                 </label>
-              ) : (
-                <div className="border-2 border-[var(--navy)]/30 rounded-xl p-4 bg-[var(--navy)]/5">
-                  <div className="flex items-center gap-2 mb-3 text-[var(--navy)] text-sm font-bold">
-                    <FileCheck size={16} />
-                    {pendingFile.name}
+              </div>
+
+              {excelTotalRead !== null && (
+                <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm max-w-xl">
+                  <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                    <h3 className="text-sm font-black text-[var(--navy)]">نتيجة المطابقة</h3>
                   </div>
-                  <label className="block mb-2 text-xs text-gray-600 font-medium">اسم هذا التحديث</label>
-                  <input
-                    value={batchLabel}
-                    onChange={(e) => setBatchLabel(e.target.value)}
-                    className="w-full bg-white border-2 border-[var(--navy)]/20 rounded-lg p-2 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                  />
-                  <label className="flex items-center gap-2 mb-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isMakeupBatch}
-                      onChange={(e) => setIsMakeupBatch(e.target.checked)}
-                      className="w-4 h-4 cursor-pointer accent-[var(--navy)]"
-                    />
-                    <span className="text-xs text-[var(--navy)] font-bold">هذا تحديث فئة مكياج (يُستثنى من الطباعة الجماعية العامة)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleConfirmUpload}
-                      disabled={uploading}
-                      className="flex-1 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-sm font-bold py-2 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      {uploading ? 'جاري الرفع...' : 'تأكيد ورفع التحديث'}
-                    </button>
-                    <button
-                      onClick={() => { setPendingFile(null); setBatchLabel(''); setIsMakeupBatch(false) }}
-                      className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold rounded-lg transition-colors"
-                    >
-                      إلغاء
-                    </button>
+                  <div className="p-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-gray-500 text-xs font-bold">إجمالي الباركودات بالملف</p>
+                      <p className="text-[var(--navy)] font-black text-lg">{excelTotalRead}</p>
+                    </div>
+                    <div className="bg-emerald-50 rounded-lg p-3">
+                      <p className="text-emerald-700 text-xs font-bold">له عرض حالياً</p>
+                      <p className="text-emerald-700 font-black text-lg">{excelMatchedItems.length}</p>
+                    </div>
+                    <div className="bg-[var(--red)]/5 rounded-lg p-3 col-span-2">
+                      <p className="text-[var(--red)] text-xs font-bold">ما تم لقاه بالعروض الحالية</p>
+                      <p className="text-[var(--red)] font-black text-lg">{excelUnmatchedBarcodes.length}</p>
+                    </div>
                   </div>
+                  {excelMatchedItems.length > 0 && (
+                    <div className="p-4 pt-0 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleExcelAction('download')}
+                        disabled={excelGenerating}
+                        className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Download size={13} />
+                        تحميل ملصقات المطابقة
+                      </button>
+                      <button
+                        onClick={() => handleExcelAction('print')}
+                        disabled={excelGenerating}
+                        className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Printer size={13} />
+                        {excelGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+                      </button>
+                      <button
+                        onClick={handleAddExcelResultsToQueue}
+                        className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-4 py-2 rounded-lg transition-colors"
+                      >
+                        <ListPlus size={13} />
+                        أضف لقائمة الطباعة
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          {activeSection === 'label' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm max-w-xl">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="font-black text-sm text-[var(--navy)]">قالب الملصق</h2>
-                <ImagePlus size={16} className="text-[var(--yellow)]" />
-              </div>
-              <p className="text-xs text-gray-600 font-medium mb-4">صورة PNG بجودة عالية تُستخدم كقالب خلفية لكل ملصقات الفروع</p>
-
-              <div className="mb-4">
-                <p className="text-xs font-bold text-gray-500 mb-2">المعاينة الحالية</p>
-                {labelExists && labelPreviewUrl ? (
-                  <div className="border-2 border-[var(--navy)]/15 rounded-xl overflow-hidden bg-gray-50 flex justify-center p-4">
-                    <img src={labelPreviewUrl} alt="قالب الملصق الحالي" className="max-h-80 object-contain rounded-lg" />
-                  </div>
-                ) : (
-                  <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center text-gray-400 text-sm font-medium">
-                    لا يوجد قالب مرفوع حالياً
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-3">
-                <label className="flex-1 flex items-center justify-center gap-2 border-2 border-dashed border-[var(--yellow)]/50 rounded-xl p-4 cursor-pointer hover:border-[var(--yellow)] hover:bg-[var(--yellow)]/10 transition-colors">
-                  <ImagePlus size={18} className="text-[#8a6300]" />
-                  <span className="text-[var(--navy)] font-bold text-sm">
-                    {uploadingBg ? 'جاري الرفع...' : labelExists ? 'استبدال القالب' : 'رفع قالب جديد'}
+          {activeSection === 'downloads' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
+              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
+                <Download size={16} />
+                التنزيلات
+              </h2>
+              <p className="text-xs text-gray-500 font-medium mb-4">
+                تحميل بيانات أو ملصقات كل المنتجات دفعة وحدة
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  onClick={handleDownloadAllExcel}
+                  className="flex flex-col items-center gap-2 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] rounded-xl p-5 transition-colors"
+                >
+                  <Package size={24} />
+                  <span className="text-sm font-bold">تحميل إكسل كل المنتجات</span>
+                  <span className="text-[11px] text-gray-500">({allItems.length} منتج بكل تفاصيلها)</span>
+                </button>
+                <button
+                  onClick={handleDownloadAllLabels}
+                  disabled={downloadsGenerating}
+                  className="flex flex-col items-center gap-2 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] rounded-xl p-5 transition-colors disabled:opacity-50"
+                >
+                  <Printer size={24} />
+                  <span className="text-sm font-bold">
+                    {downloadsGenerating ? 'جاري التوليد...' : 'تحميل ملصقات كل المنتجات'}
                   </span>
-                  <input type="file" accept="image/png,image/jpeg" onChange={handleUploadBackground} className="hidden" disabled={uploadingBg} />
-                </label>
-                {labelExists && (
-                  <button
-                    onClick={handleDeleteBackground}
-                    className="flex items-center justify-center gap-2 bg-white border-2 border-[var(--red)]/30 hover:bg-[var(--red)]/5 text-[var(--red)] px-4 py-2.5 rounded-lg text-sm font-bold transition-colors"
-                  >
-                    <Trash2 size={15} />
-                    حذف القالب
-                  </button>
-                )}
+                  <span className="text-[11px] text-gray-500">({nonMakeupItems.length} منتج، بدون فئة المكياج)</span>
+                </button>
               </div>
-              <p className="text-[11px] text-gray-400 font-medium mt-2">صيغة مقبولة: PNG بجودة عالية</p>
             </div>
           )}
 
-          {activeSection === 'cancel' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--red)]/30 p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="font-black text-sm text-[var(--navy)]">إدارة العروض الملغاة</h2>
-                <XCircle size={16} className="text-[var(--red)]" />
-              </div>
-              <p className="text-xs text-gray-600 font-medium mb-3">ملف فيه عمود باركود فقط للمنتجات اللي يُلغى عرضها</p>
-
-              <div className="flex flex-col md:flex-row gap-3 items-start">
-                {!pendingCancelFile ? (
-                  <label className="flex items-center justify-center gap-3 border-2 border-dashed border-[var(--red)]/30 rounded-xl p-5 cursor-pointer hover:border-[var(--red)] hover:bg-[var(--red)]/5 transition-colors w-full md:w-1/2">
-                    <XCircle size={20} className="text-[var(--red)]" />
-                    <span className="text-[var(--navy)] font-bold text-sm">اختر ملف الإلغاء (Excel)</span>
-                    <input type="file" accept=".xlsx,.xls" onChange={handleSelectCancelFile} className="hidden" />
-                  </label>
-                ) : (
-                  <div className="border-2 border-[var(--red)]/40 rounded-xl p-4 bg-[var(--red)]/5 w-full md:w-1/2">
-                    <div className="flex items-center gap-2 mb-3 text-[var(--red)] text-sm font-bold">
-                      <FileCheck size={16} />
-                      {pendingCancelFile.name}
-                    </div>
-                    <label className="block mb-2 text-xs text-gray-600 font-medium">اسم هذا الإلغاء</label>
-                    <input
-                      value={cancelBatchLabel}
-                      onChange={(e) => setCancelBatchLabel(e.target.value)}
-                      className="w-full bg-white border-2 border-[var(--red)]/20 rounded-lg p-2 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--red)]/20"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleConfirmCancelUpload}
-                        disabled={uploadingCancel}
-                        className="flex-1 bg-[var(--red)] hover:bg-[#c11a20] text-white text-sm font-bold py-2 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {uploadingCancel ? 'جاري الإلغاء...' : 'تأكيد الإلغاء'}
-                      </button>
-                      <button
-                        onClick={() => { setPendingCancelFile(null); setCancelBatchLabel('') }}
-                        className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold rounded-lg transition-colors"
-                      >
-                        إلغاء
-                      </button>
-                    </div>
+          {activeSection === 'queue' && (
+            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+              <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5 flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                  <Printer size={16} />
+                  قائمة الطباعة ({printQueue.length})
+                </h2>
+                {printQueue.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleQueueAction('download')}
+                      disabled={generatingQueue}
+                      className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <Download size={13} />
+                      تحميل الكل
+                    </button>
+                    <button
+                      onClick={() => handleQueueAction('print')}
+                      disabled={generatingQueue}
+                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <Printer size={13} />
+                      {generatingQueue ? 'جاري التوليد...' : 'طباعة الكل'}
+                    </button>
+                    <button onClick={clearQueue} className="text-[var(--red)] hover:underline text-xs font-bold">
+                      تفريغ
+                    </button>
                   </div>
                 )}
-
-                <button
-                  onClick={handleDownloadCancelled}
-                  className="flex items-center justify-center gap-2 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] px-4 py-2.5 rounded-lg text-sm font-bold transition-colors whitespace-nowrap"
-                >
-                  <Download size={15} />
-                  تحميل إكسل الملغاة ({cancelledCount})
-                </button>
               </div>
-            </div>
-          )}
-
-          {activeSection === 'history' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
-              <div className="p-4 border-b-2 border-[var(--navy)]/10 flex items-center gap-2 bg-[var(--navy)]/5">
-                <History size={16} className="text-[var(--navy)]" />
-                <h2 className="font-black text-sm text-[var(--navy)]">سجل التحديثات ({batches.length})</h2>
-              </div>
-              <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[700px] overflow-y-auto">
-                {batches.length === 0 && (
-                  <p className="p-6 text-center text-gray-500 text-sm font-medium">ماله تحديثات لسا</p>
+              <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                {printQueue.length === 0 && (
+                  <p className="p-6 text-center text-gray-400 text-sm">
+                    قائمة الطباعة فاضية — أضف منتجات من "كل العروض" أو "إضافة عدة باركودات"
+                  </p>
                 )}
-                {batches.map((batch) => {
-                  const batchItems = itemsForBatch(batch)
-                  const isOpen = expandedBatchId === batch.id
-                  const isCancel = batch.batch_type === 'cancel'
-                  const respondedMap = isCancel ? removalMap : activationMap
-                  const respondedSet = respondedMap[batch.id] || new Set()
-                  return (
-                    <div key={batch.id}>
-                      <button
-                        onClick={() => setExpandedBatchId(isOpen ? null : batch.id)}
-                        className="w-full flex items-center justify-between p-4 hover:bg-[var(--navy)]/5 transition-colors text-right"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className={`w-2.5 h-2.5 rounded-full ${isCancel ? 'bg-[var(--red)]' : 'bg-emerald-500'}`} />
-                          <div>
-                            <p className="text-sm font-bold text-[var(--navy)]">{batch.label}</p>
-                            <p className="text-[11px] text-gray-500 font-medium">{formatDate(batch.created_at)}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className={`text-xs font-bold px-2.5 py-1 rounded-md ${isCancel ? 'bg-[var(--red)]/10 text-[var(--red)]' : 'bg-emerald-100 text-emerald-700'}`}>
-                            {isCancel ? 'إلغاء' : 'جديد'} · {batchItems.length}
-                          </span>
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-[var(--navy)]/10 text-[var(--navy)]">
-                            {respondedSet.size}/{branches.length} استجاب
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteBatch(batch) }}
-                            className="text-gray-400 hover:text-[var(--red)] transition-colors p-1"
-                            title="حذف هذا التحديث بالكامل"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                          {isOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                        </div>
-                      </button>
-                      {isOpen && (
-                        <div className="bg-[var(--navy)]/5 px-4 pb-4 space-y-4">
-                          <div>
-                            <p className="text-xs font-bold text-gray-500 mb-2">المنتجات ({batchItems.length})</p>
-                            <div className="max-h-40 overflow-y-auto space-y-1.5">
-                              {batchItems.map((item) => (
-                                <div key={item.id} className="flex items-center justify-between text-xs bg-white border border-[var(--navy)]/10 rounded-lg px-3 py-2">
-                                  <span className="text-[var(--navy)] font-bold">{item.product_name}</span>
-                                  <span className="text-gray-500">{item.barcode}</span>
-                                </div>
-                              ))}
-                              {batchItems.length === 0 && (
-                                <p className="text-gray-400 text-xs text-center py-2">ما فيه منتجات مرتبطة</p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div>
-                            <p className="text-xs font-bold text-gray-500 mb-2">
-                              {isCancel ? 'حالة الفروع (إزالة الملصقات)' : 'حالة الفروع (تفعيل التحديث)'}
-                            </p>
-                            <div className="grid sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
-                              {branches.map((b) => {
-                                const done = respondedSet.has(b.id)
-                                return (
-                                  <div
-                                    key={b.id}
-                                    className={`flex items-center justify-between text-xs rounded-lg px-3 py-2 border ${
-                                      done ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'
-                                    }`}
-                                  >
-                                    <span className="flex items-center gap-1.5 text-[var(--navy)] font-bold">
-                                      <Store size={12} />
-                                      {b.name}
-                                    </span>
-                                    {done ? (
-                                      <span className="flex items-center gap-1 text-emerald-600 font-bold">
-                                        <CheckCircle2 size={12} />
-                                        {isCancel ? 'أزال' : 'فعّل'}
-                                      </span>
-                                    ) : (
-                                      <span className="text-gray-400 font-bold">لسه ما استجاب</span>
-                                    )}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                {printQueue.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 p-3.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-[var(--navy)] truncate">{item.product_name}</p>
+                      <p className="text-xs text-gray-500">{item.barcode}</p>
                     </div>
-                  )
-                })}
+                    <button onClick={() => removeFromQueue(item.id)} className="text-gray-400 hover:text-[var(--red)] shrink-0">
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {activeSection === 'manual' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-black text-sm text-[var(--navy)]">إضافة منتج يدوياً</h2>
-                <PlusCircle size={16} className="text-[var(--navy)]" />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <input value={newBarcode} onChange={(e) => setNewBarcode(e.target.value)} placeholder="الباركود"
-                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
-                <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="اسم المنتج"
-                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
-                <div className="relative">
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">SR</span>
-                  <input value={newPrevPrice} onChange={(e) => setNewPrevPrice(e.target.value)} placeholder="السعر السابق" type="number"
-                    className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 pr-10 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
+          {activeSection === 'periodicCheck' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                      <ClipboardCheck size={16} />
+                      التشييك الدوري
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium mt-1">
+                      أكّد إن ملصق كل منتج موجود وصحيح
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleStartNewPeriodicRound}
+                    className="flex items-center gap-1.5 bg-white border-2 border-[var(--red)]/20 hover:bg-[var(--red)]/5 text-[var(--red)] text-xs font-bold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    بدء دورة تشييك جديدة
+                  </button>
                 </div>
-                <div className="relative">
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">SR</span>
-                  <input value={newOfferPrice} onChange={(e) => setNewOfferPrice(e.target.value)} placeholder="سعر العرض" type="number"
-                    className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 pr-10 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-full transition-all"
+                      style={{ width: `${periodicRelevantItems.length > 0 ? (periodicCheckedCount / periodicRelevantItems.length) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-black text-[var(--navy)] shrink-0">
+                    {periodicCheckedCount} من {periodicRelevantItems.length}
+                  </span>
                 </div>
               </div>
-              <button onClick={handleAddManual}
-                className="mt-4 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white px-6 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-2">
-                <PlusCircle size={16} />
-                إضافة المنتج
-              </button>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {allItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه عروض حالياً</p>
+                  )}
+                  {allItems.map((item) => {
+                    const isChecked = !!periodicChecks[item.barcode]
+                    const isUnavailable = !!periodicUnavailable[item.barcode]
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 ${
+                          isUnavailable ? 'bg-gray-50 opacity-60' : isChecked ? 'bg-emerald-50' : 'bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={isUnavailable}
+                            onChange={() => togglePeriodicCheck(item.barcode)}
+                            className="w-5 h-5 mt-0.5 cursor-pointer accent-emerald-600 shrink-0 disabled:cursor-not-allowed"
+                          />
+                          <div className="min-w-0">
+                            <p className={`text-sm font-bold break-words ${isUnavailable ? 'text-gray-400 line-through' : 'text-[var(--navy)]'}`}>
+                              {item.product_name}
+                            </p>
+                            <p className="text-[11px] text-gray-500">{item.barcode}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => togglePeriodicUnavailable(item.barcode)}
+                          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg shrink-0 self-start sm:self-auto transition-colors ${
+                            isUnavailable
+                              ? 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              : 'bg-white border border-gray-300 text-gray-500 hover:bg-gray-100'
+                          }`}
+                        >
+                          {isUnavailable ? 'مو متوفر' : 'غير متوفر بفرعي'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
-          {activeSection === 'messages' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm">
-                <div className="flex items-center gap-2 mb-4">
-                  <Send size={16} className="text-[var(--navy)]" />
-                  <h2 className="font-black text-sm text-[var(--navy)]">إرسال رسالة</h2>
+          {activeSection === 'makeup' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={makeupSearchText}
+                      onChange={(e) => setMakeupSearchText(e.target.value)}
+                      placeholder="ابحث بالاسم أو الباركود"
+                      className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                    />
+                  </div>
+                  {makeupItems.length > 0 && (
+                    <button
+                      onClick={handleDownloadMakeupLabels}
+                      disabled={downloadsGenerating}
+                      className="flex items-center gap-1.5 bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      <Printer size={13} />
+                      {downloadsGenerating ? 'جاري التوليد...' : `تحميل كل ملصقات المكياج (${makeupItems.length})`}
+                    </button>
+                  )}
                 </div>
-                <label className="block text-xs font-bold text-gray-500 mb-1">إرسال إلى</label>
-                <select
-                  value={messageTarget}
-                  onChange={(e) => setMessageTarget(e.target.value)}
-                  className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-bold mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                >
-                  <option value="">كل الفروع</option>
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
-                <textarea
-                  value={newMessageText}
-                  onChange={(e) => setNewMessageText(e.target.value)}
-                  placeholder="اكتب رسالتك هنا..."
-                  rows={4}
-                  className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20 resize-none"
-                />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={sendingMessage || !newMessageText.trim()}
-                  className="w-full bg-[var(--navy)] hover:bg-[#0f1a4d] text-white px-5 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Send size={15} />
-                  {sendingMessage ? 'جاري الإرسال...' : 'إرسال'}
-                </button>
+                <p className="text-[11px] text-gray-400 font-medium">
+                  منتجات المكياج مستثناة من الطباعة الجماعية العامة — تطبعها من هنا لحالها
+                </p>
               </div>
 
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
                 <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
-                  <h2 className="font-black text-sm text-[var(--navy)]">سجل الرسائل</h2>
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Layers size={16} />
+                    منتجات المكياج ({filteredMakeupItems.length})
+                  </h2>
                 </div>
-                <div className="divide-y divide-[var(--navy)]/10 max-h-[500px] overflow-y-auto">
-                  {messages.length === 0 && (
-                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه رسائل بعد</p>
+
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {filteredMakeupItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</p>
                   )}
-                  {messages.map((m) => (
-                    <div key={m.id} className={`p-4 ${m.sender_role === 'branch' ? 'bg-[var(--yellow)]/5' : ''}`}>
-                      <p className="text-xs font-bold text-gray-500 mb-1">
-                        {m.sender_role === 'admin'
-                          ? `أنت → ${m.target_branch_id ? branchName(m.target_branch_id) : 'كل الفروع'}`
-                          : `${branchName(m.sender_branch_id) || 'فرع'} → أنت`}
-                        <span className="font-normal"> · {formatDate(m.created_at)}</span>
-                      </p>
-                      <p className="text-sm text-[var(--navy)] font-medium">{m.body}</p>
+                  {filteredMakeupItems.map((item) => (
+                    <div key={item.id} className="p-3.5 space-y-2">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--navy)]">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.barcode} ·{' '}
+                          <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                          <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => addToQueue(item)}
+                          disabled={queueIds.has(item.id)}
+                          className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <ListPlus size={13} />
+                          {queueIds.has(item.id) ? 'مضاف' : 'أضف'}
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'download')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Download size={13} />
+                          تحميل
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'print')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Printer size={13} />
+                          طباعة
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                        <tr>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                          <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMakeupItems.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</td>
+                          </tr>
+                        )}
+                        {filteredMakeupItems.map((item, i) => (
+                          <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-pink-50/40'} hover:bg-pink-100/50 transition-colors`}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                            <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => addToQueue(item)}
+                                  disabled={queueIds.has(item.id)}
+                                  title="أضف لقائمة الطباعة"
+                                  className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
+                                >
+                                  <ListPlus size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'download')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Download size={13} />
+                                  تحميل
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'print')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Printer size={13} />
+                                  طباعة
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {activeSection === 'whatsapp' && <WhatsAppNotifySection />}
-
-          {activeSection === 'accounts' && <BranchAccountsSection />}
-
-          {activeSection === 'audit' && <AuditOverviewSection />}
-
-          {activeSection === 'settings' && (
-            <div className="space-y-5 max-w-2xl">
-              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm">
-                <h2 className="font-black text-sm text-[var(--navy)] mb-1">إعدادات الحساب</h2>
-                <p className="text-xs text-gray-500 font-medium">إعدادات عامة للنظام</p>
+          {activeSection === 'general' && (
+            <>
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+                <div className="relative">
+                  <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    placeholder="ابحث بالاسم أو الباركود"
+                    autoFocus
+                    className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                  />
+                </div>
               </div>
 
-              <div className="bg-[var(--red)]/5 rounded-2xl border-2 border-[var(--red)]/30 p-6 shadow-sm">
-                <h2 className="font-black text-sm text-[var(--red)] mb-1 flex items-center gap-2">
-                  <XCircle size={16} />
-                  منطقة الخطر
-                </h2>
-                <p className="text-xs text-gray-600 font-medium mb-4">
-                  تهيئة كاملة: يمسح كل المنتجات، التحديثات، الإلغاءات، تأكيدات الفروع، باركودات الفروع، الرسائل، سجل النشاط، بيانات التدقيق، وقالب الملصق — نهائياً بدون رجعة.
-                  <br />
-                  <strong>ما يتأثر:</strong> أسماء الفروع وحساباتها (كلمات السر) تبقى زي ما هي.
-                </p>
-                <button
-                  onClick={() => setShowFactoryResetModal(true)}
-                  className="bg-[var(--red)] hover:bg-[#c11a20] text-white font-black px-6 py-3 rounded-xl transition-colors"
-                >
-                  تهيئة كاملة (حذف كل شي)
-                </button>
-              </div>
-            </div>
-          )}
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Package size={16} />
+                    كل العروض ({filteredItems.length})
+                  </h2>
+                </div>
 
-          {activeSection === 'activity' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
-              <div className="p-4 border-b-2 border-[var(--navy)]/10 flex items-center gap-2 bg-[var(--navy)]/5">
-                <History size={16} className="text-[var(--navy)]" />
-                <h2 className="font-black text-sm text-[var(--navy)]">سجل النشاط ({activityLogs.length})</h2>
-              </div>
-              <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[700px] overflow-y-auto">
-                {activityLogs.length === 0 && (
-                  <p className="p-6 text-center text-gray-500 text-sm font-medium">ما فيه أي نشاط مسجل بعد</p>
-                )}
-                {activityLogs.map((log) => {
-                  const isAdmin = log.actor_role === 'admin'
-                  const actorName = isAdmin ? 'الإدارة' : (branchName(log.branch_id) || 'فرع غير معروف')
-                  return (
-                    <div key={log.id} className="flex items-center justify-between gap-3 p-4">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isAdmin ? 'bg-[var(--navy)]' : 'bg-emerald-500'}`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-[var(--navy)] truncate">
-                            <span className={isAdmin ? 'text-[var(--navy)]' : 'text-emerald-700'}>{actorName}</span>
-                            {' '}{log.action}
-                            {log.details && <span className="text-gray-500 font-medium"> — {log.details}</span>}
-                          </p>
-                          <p className="text-[11px] text-gray-500 font-medium">{formatDate(log.created_at)}</p>
-                        </div>
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {filteredItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</p>
+                  )}
+                  {filteredItems.map((item) => (
+                    <div key={item.id} className="p-3.5 space-y-2">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--navy)]">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.barcode} ·{' '}
+                          <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                          <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => addToQueue(item)}
+                          disabled={queueIds.has(item.id)}
+                          className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <ListPlus size={13} />
+                          {queueIds.has(item.id) ? 'مضاف' : 'أضف'}
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'download')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Download size={13} />
+                          تحميل
+                        </button>
+                        <button
+                          onClick={() => handleAction(item, 'print')}
+                          disabled={printingId === item.id}
+                          className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Printer size={13} />
+                          طباعة
+                        </button>
                       </div>
                     </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {activeSection === 'table' && (
-            <div
-              onWheel={handleTableWheel}
-              className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm"
-            >
-              <div className="p-4 border-b-2 border-[var(--navy)]/10 flex flex-wrap items-center justify-between gap-3 bg-[var(--navy)]/5">
-                <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
-                  <Package size={16} />
-                  جدول المنتجات ({searchedItems.length})
-                </h2>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="relative">
-                    <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={tableSearchQuery}
-                      onChange={(e) => setTableSearchQuery(e.target.value)}
-                      placeholder="ابحث بالاسم أو الباركود"
-                      className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2 pr-8 text-xs text-[var(--navy)] font-medium w-48 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                    />
-                  </div>
-                  {selectedIds.size > 0 && (
-                    <button
-                      onClick={handleBulkDelete}
-                      className="flex items-center gap-1.5 bg-[var(--red)] hover:bg-[#c11a20] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={13} />
-                      حذف المحدد ({selectedIds.size})
-                    </button>
-                  )}
-                  <div className="flex gap-1 bg-white rounded-lg border-2 border-[var(--navy)]/15 p-1">
-                    <button
-                      onClick={() => setTableFilter('active')}
-                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${tableFilter === 'active' ? 'bg-emerald-500 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
-                    >
-                      نشطة
-                    </button>
-                    <button
-                      onClick={() => setTableFilter('cancelled')}
-                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${tableFilter === 'cancelled' ? 'bg-[var(--red)] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
-                    >
-                      ملغاة
-                    </button>
-                    <button
-                      onClick={() => setTableFilter('all')}
-                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${tableFilter === 'all' ? 'bg-[var(--navy)] text-white' : 'text-gray-500 hover:bg-gray-50'}`}
-                    >
-                      الكل
-                    </button>
-                  </div>
+                  ))}
                 </div>
-              </div>
-              <div className="overflow-x-auto">
-                {paginatedItems.length > 0 && paginatedItems.every((i) => selectedIds.has(i.id!)) && selectedIds.size < searchedItems.length && (
-                  <div className="p-2.5 bg-[var(--navy)]/5 border-b-2 border-[var(--navy)]/10 text-center text-xs font-bold text-[var(--navy)]">
-                    تم تحديد {selectedIds.size} منتج بهذي الصفحة.{' '}
-                    <button
-                      onClick={() => setSelectedIds(new Set(searchedItems.map((i) => i.id!).filter(Boolean)))}
-                      className="text-[var(--red)] underline hover:no-underline"
-                    >
-                      تحديد كل الـ{searchedItems.length} منتج المطابقة للفلتر
-                    </button>
-                  </div>
-                )}
-                {selectedIds.size === searchedItems.length && searchedItems.length > 0 && (
-                  <div className="p-2.5 bg-[var(--red)]/5 border-b-2 border-[var(--red)]/20 text-center text-xs font-bold text-[var(--red)]">
-                    تم تحديد كل الـ{searchedItems.length} منتج.{' '}
-                    <button
-                      onClick={() => setSelectedIds(new Set())}
-                      className="underline hover:no-underline"
-                    >
-                      إلغاء التحديد
-                    </button>
-                  </div>
-                )}
-                <table className="w-full text-sm border-collapse">
-                  <thead className="bg-[var(--navy)] text-white">
-                    <tr>
-                      <th className="p-3 text-center font-bold border-2 border-white/20 w-10">
-                        <input
-                          type="checkbox"
-                          checked={paginatedItems.length > 0 && paginatedItems.every((i) => selectedIds.has(i.id!))}
-                          onChange={toggleSelectAllOnPage}
-                          className="w-4 h-4 cursor-pointer"
-                        />
-                      </th>
-                      <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
-                      <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
-                      <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
-                      <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
-                      <th className="p-3 text-center font-bold border-2 border-white/20">الخصم</th>
-                      <th className="p-3 text-center font-bold border-2 border-white/20">الحالة</th>
-                      <th className="p-3 text-center font-bold border-2 border-white/20">حذف</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedItems.map((item, i) => {
-                      const discount = item.previous_price
-                        ? Math.round((1 - item.offer_price / item.previous_price) * 100)
-                        : 0
-                      const cancelled = item.is_active === false
-                      const isEditing = editingId === item.id
-                      return (
-                        <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors ${cancelled ? 'opacity-50' : ''} ${selectedIds.has(item.id!) ? 'bg-[var(--navy)]/10' : ''} ${isEditing ? 'bg-[var(--yellow)]/10' : ''}`}>
-                          <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(item.id!)}
-                              onChange={() => toggleSelectItem(item.id!)}
-                              className="w-4 h-4 cursor-pointer"
-                            />
-                          </td>
-                          <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
-                          <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">
-                            {isEditing ? (
-                              <div className="space-y-1.5">
-                                <input
-                                  value={editName}
-                                  onChange={(e) => setEditName(e.target.value)}
-                                  className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                                />
-                                <label className="flex items-center gap-1.5 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={editIsMakeup}
-                                    onChange={(e) => setEditIsMakeup(e.target.checked)}
-                                    className="w-3.5 h-3.5 cursor-pointer accent-[var(--navy)]"
-                                  />
-                                  <span className="text-[11px] text-gray-500 font-medium">فئة مكياج</span>
-                                </label>
-                              </div>
-                            ) : (
-                              <span className="flex items-center gap-1.5">
-                                {item.product_name}
-                                {item.is_makeup && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700">مكياج</span>
-                                )}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-gray-500 font-bold border-2 border-[var(--navy)]/10">
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                value={editPrevPrice}
-                                onChange={(e) => setEditPrevPrice(e.target.value)}
-                                className="w-24 bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                              />
-                            ) : (
-                              <span className="line-through">{item.previous_price.toFixed(2)}</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                value={editOfferPrice}
-                                onChange={(e) => setEditOfferPrice(e.target.value)}
-                                className="w-24 bg-white border-2 border-[var(--red)]/30 rounded-lg p-1.5 text-sm text-[var(--red)] font-black focus:outline-none focus:ring-2 focus:ring-[var(--red)]/20"
-                              />
-                            ) : (
-                              item.offer_price.toFixed(2)
-                            )}
-                          </td>
-                          <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                            <span className={`inline-block text-xs font-bold px-2.5 py-1 rounded-md ${discountBadgeClass(discount)}`}>
-                              {discount}%-
-                            </span>
-                          </td>
-                          <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                            {cancelled ? (
-                              <button
-                                onClick={() => handleReactivate(item.id!)}
-                                className="text-xs font-bold text-[var(--red)] hover:text-emerald-600 transition-colors"
-                              >
-                                ملغى (إعادة تفعيل)
-                              </button>
-                            ) : (
-                              <span className="text-xs font-bold text-emerald-600">نشط</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center border-2 border-[var(--navy)]/10">
-                            <div className="flex items-center justify-center gap-2">
-                              {isEditing ? (
-                                <>
-                                  <button
-                                    onClick={() => handleSaveEdit(item.id!)}
-                                    disabled={savingEdit}
-                                    className="text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                    title="حفظ"
-                                  >
-                                    <Check size={16} />
-                                  </button>
-                                  <button
-                                    onClick={handleCancelEdit}
-                                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                                    title="إلغاء"
-                                  >
-                                    <X size={16} />
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => handleStartEdit(item)}
-                                    className="text-gray-400 hover:text-[var(--navy)] transition-colors"
-                                    title="تعديل السعر"
-                                  >
-                                    <Pencil size={15} />
-                                  </button>
-                                  <button onClick={() => handleDelete(item.id!)} className="text-gray-400 hover:text-[var(--red)] transition-colors" title="حذف">
-                                    <Trash2 size={16} />
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                        <tr>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">الباركود</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">السعر السابق</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                          <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
                         </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="p-4 border-t-2 border-[var(--navy)]/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-[var(--navy)]/5">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    className="w-8 h-8 rounded-lg bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 disabled:opacity-30 flex items-center justify-center transition-colors"
-                  >
-                    <ChevronRight size={15} className="text-[var(--navy)]" />
-                  </button>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1)
-                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-                    .map((p, idx, arr) => (
-                      <span key={p} className="flex items-center gap-2">
-                        {idx > 0 && arr[idx - 1] !== p - 1 && <span className="text-gray-400">...</span>}
-                        <button
-                          onClick={() => setPage(p)}
-                          className={`w-8 h-8 rounded-lg text-sm font-semibold transition-colors ${
-                            p === page ? 'bg-[var(--navy)] text-white' : 'bg-white border-2 border-[var(--navy)]/15 text-[var(--navy)] hover:bg-[var(--navy)]/10'
-                          }`}
-                        >
-                          {p}
-                        </button>
-                      </span>
-                    ))}
-                  <button
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                    className="w-8 h-8 rounded-lg bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 disabled:opacity-30 flex items-center justify-center transition-colors"
-                  >
-                    <ChevronLeft size={15} className="text-[var(--navy)]" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-gray-600 font-bold">
-                  <span>
-                    عرض {(page - 1) * pageSize + 1} - {Math.min(page * pageSize, searchedItems.length)} من {searchedItems.length} منتج
-                  </span>
-                  <select
-                    value={pageSize}
-                    onChange={(e) => setPageSize(Number(e.target.value))}
-                    className="bg-white border-2 border-[var(--navy)]/15 rounded-lg px-2 py-1 text-[var(--navy)] text-xs font-bold focus:outline-none"
-                  >
-                    {PAGE_SIZE_OPTIONS.map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
+                      </thead>
+                      <tbody>
+                        {filteredItems.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج مطابقة</td>
+                          </tr>
+                        )}
+                        {filteredItems.map((item, i) => (
+                          <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors`}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.barcode}</td>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                            <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => addToQueue(item)}
+                                  disabled={queueIds.has(item.id)}
+                                  title="أضف لقائمة الطباعة"
+                                  className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
+                                >
+                                  <ListPlus size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'download')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Download size={13} />
+                                  تحميل
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item, 'print')}
+                                  disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Printer size={13} />
+                                  طباعة
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       </div>
-
-      {confirmDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-            <p className="text-sm text-[var(--navy)] font-bold mb-6 whitespace-pre-line leading-relaxed">
-              {confirmDialog.message}
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  confirmDialog.onConfirm()
-                  setConfirmDialog(null)
-                }}
-                className="flex-1 bg-[var(--red)] hover:bg-[#c11a20] text-white text-sm font-bold py-2.5 rounded-lg transition-colors"
-              >
-                تأكيد الحذف
-              </button>
-              <button
-                onClick={() => setConfirmDialog(null)}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold py-2.5 rounded-lg transition-colors"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showFactoryResetModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border-4 border-[var(--red)]">
-            <h3 className="text-[var(--red)] font-black text-base mb-2 flex items-center gap-2">
-              <XCircle size={20} />
-              تحذير: تهيئة كاملة
-            </h3>
-            <p className="text-sm text-gray-700 font-medium mb-4 leading-relaxed">
-              هذا الإجراء يمسح كل المنتجات، التحديثات، الإلغاءات، تأكيدات الفروع، باركوداتهم، الرسائل، سجل النشاط، بيانات التدقيق، وقالب الملصق — <strong>نهائياً وبدون رجعة</strong>.
-              <br /><br />
-              اكتب كلمة <strong className="text-[var(--red)]">تهيئة</strong> بالخانة تحت عشان تأكد:
-            </p>
-            <input
-              value={factoryResetInput}
-              onChange={(e) => setFactoryResetInput(e.target.value)}
-              placeholder="اكتب: تهيئة"
-              className="w-full bg-white border-2 border-[var(--red)]/30 rounded-lg p-2.5 text-sm text-[var(--navy)] font-bold mb-4 focus:outline-none focus:ring-2 focus:ring-[var(--red)]/30"
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={handleFactoryReset}
-                disabled={factoryResetInput !== 'تهيئة' || resettingFactory}
-                className="flex-1 bg-[var(--red)] hover:bg-[#c11a20] text-white text-sm font-black py-2.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {resettingFactory ? 'جاري التهيئة...' : 'نعم، امسح كل شي'}
-              </button>
-              <button
-                onClick={() => { setShowFactoryResetModal(false); setFactoryResetInput('') }}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold py-2.5 rounded-lg transition-colors"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
