@@ -5,7 +5,7 @@ import jsPDF from 'jspdf'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import InstallPWAButton from '../components/InstallPWAButton'
-import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud } from 'lucide-react'
+import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud, ClipboardCheck } from 'lucide-react'
 
 interface OfferItem {
   id: string
@@ -74,7 +74,7 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'excel' | 'downloads' | 'queue'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'bulk' | 'excel' | 'downloads' | 'queue' | 'periodicCheck'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [status, setStatus] = useState('')
@@ -95,6 +95,7 @@ export default function PrintPage() {
   const [excelGenerating, setExcelGenerating] = useState(false)
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
+  const [periodicChecks, setPeriodicChecks] = useState<Record<string, boolean>>({})
   const bgImageRef = useRef<HTMLImageElement | null>(null)
 
   const queueIds = new Set(printQueue.map((i) => i.id))
@@ -265,6 +266,34 @@ export default function PrintPage() {
     const timer = setTimeout(() => setReadyDownloads([]), 60000)
     return () => clearTimeout(timer)
   }, [readyDownloads])
+
+  // التشييك الدوري محفوظ محلياً بهذا الجهاز بس (ما يشتركه أي جهاز ثاني)
+  useEffect(() => {
+    const saved = localStorage.getItem('print_periodic_checks')
+    if (saved) {
+      try {
+        setPeriodicChecks(JSON.parse(saved))
+      } catch {
+        localStorage.removeItem('print_periodic_checks')
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('print_periodic_checks', JSON.stringify(periodicChecks))
+  }, [periodicChecks])
+
+  const togglePeriodicCheck = (barcode: string) => {
+    setPeriodicChecks((prev) => ({ ...prev, [barcode]: !prev[barcode] }))
+  }
+
+  const handleStartNewPeriodicRound = () => {
+    const confirmed = window.confirm('بتبدأ دورة تشييك جديدة — كل العلامات ترجع فاضية من جديد على هذا الجهاز. متأكد؟')
+    if (!confirmed) return
+    setPeriodicChecks({})
+  }
+
+  const periodicCheckedCount = allItems.filter((item) => periodicChecks[item.barcode]).length
 
   const fetchOffers = async () => {
     const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
@@ -440,7 +469,7 @@ export default function PrintPage() {
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const CHUNK_SIZE = 40
+      const CHUNK_SIZE = 100
       const chunks: OfferItem[][] = []
       for (let i = 0; i < allItems.length; i += CHUNK_SIZE) chunks.push(allItems.slice(i, i + CHUNK_SIZE))
 
@@ -486,7 +515,7 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
         }
       } else {
-        const CHUNK_SIZE = 40
+        const CHUNK_SIZE = 100
         const chunks: OfferItem[][] = []
         for (let i = 0; i < excelMatchedItems.length; i += CHUNK_SIZE) chunks.push(excelMatchedItems.slice(i, i + CHUNK_SIZE))
 
@@ -531,7 +560,7 @@ export default function PrintPage() {
           setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
         }
       } else {
-        const CHUNK_SIZE = 40
+        const CHUNK_SIZE = 100
         const chunks: OfferItem[][] = []
         for (let i = 0; i < printQueue.length; i += CHUNK_SIZE) chunks.push(printQueue.slice(i, i + CHUNK_SIZE))
 
@@ -717,6 +746,20 @@ export default function PrintPage() {
               </span>
               {printQueue.length > 0 && (
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{printQueue.length}</span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveSection('periodicCheck')}
+              className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'periodicCheck' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <ClipboardCheck size={15} />
+                التشييك الدوري
+              </span>
+              {periodicCheckedCount > 0 && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">{periodicCheckedCount}/{allItems.length}</span>
               )}
             </button>
           </div>
@@ -996,6 +1039,71 @@ export default function PrintPage() {
                     </button>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'periodicCheck' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                      <ClipboardCheck size={16} />
+                      التشييك الدوري
+                    </h2>
+                    <p className="text-xs text-gray-500 font-medium mt-1">
+                      أكّد إن ملصق كل منتج موجود وصحيح — محفوظ بهذا الجهاز بس
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleStartNewPeriodicRound}
+                    className="flex items-center gap-1.5 bg-white border-2 border-[var(--red)]/20 hover:bg-[var(--red)]/5 text-[var(--red)] text-xs font-bold px-4 py-2 rounded-lg transition-colors"
+                  >
+                    بدء دورة تشييك جديدة
+                  </button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-full transition-all"
+                      style={{ width: `${allItems.length > 0 ? (periodicCheckedCount / allItems.length) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-black text-[var(--navy)] shrink-0">
+                    {periodicCheckedCount} من {allItems.length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {allItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه عروض حالياً</p>
+                  )}
+                  {allItems.map((item) => {
+                    const isChecked = !!periodicChecks[item.barcode]
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex items-center justify-between gap-3 p-3.5 ${isChecked ? 'bg-emerald-50' : 'bg-white'}`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => togglePeriodicCheck(item.barcode)}
+                            className="w-5 h-5 cursor-pointer accent-emerald-600 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-[var(--navy)] truncate">{item.product_name}</p>
+                            <p className="text-[11px] text-gray-500">{item.barcode}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )}
