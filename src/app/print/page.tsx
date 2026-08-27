@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import InstallPWAButton from '../components/InstallPWAButton'
+import InstallPWAButtonAuto from '../components/InstallPWAButtonAuto'
 import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud, ClipboardCheck } from 'lucide-react'
 
 interface OfferItem {
@@ -75,7 +75,7 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'custom' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [makeupSearchText, setMakeupSearchText] = useState('')
@@ -84,11 +84,6 @@ export default function PrintPage() {
   const [printingId, setPrintingId] = useState<string | null>(null)
   const [printQueue, setPrintQueue] = useState<OfferItem[]>([])
   const [generatingQueue, setGeneratingQueue] = useState(false)
-  const [customName, setCustomName] = useState('')
-  const [customPrevPrice, setCustomPrevPrice] = useState('')
-  const [customOfferPrice, setCustomOfferPrice] = useState('')
-  const [customNote, setCustomNote] = useState('')
-  const [customGenerating, setCustomGenerating] = useState(false)
   const [excelUploading, setExcelUploading] = useState(false)
   const [excelMatchedItems, setExcelMatchedItems] = useState<OfferItem[]>([])
   const [excelUnmatchedBarcodes, setExcelUnmatchedBarcodes] = useState<string[]>([])
@@ -215,13 +210,13 @@ export default function PrintPage() {
   }
 
   const handleAddExcelResultsToQueue = () => {
-    if (excelMatchedItems.length === 0) return
+    if (excelMatchedNonMakeup.length === 0) return
     setPrintQueue((prev) => {
       const existingIds = new Set(prev.map((i) => i.id))
-      const newOnes = excelMatchedItems.filter((m) => !existingIds.has(m.id))
+      const newOnes = excelMatchedNonMakeup.filter((m) => !existingIds.has(m.id))
       return [...prev, ...newOnes]
     })
-    setStatus(`تمت إضافة ${excelMatchedItems.length} منتج لقائمة الطباعة`)
+    setStatus(`تمت إضافة ${excelMatchedNonMakeup.length} منتج لقائمة الطباعة`)
   }
 
   const handleDownloadAllExcel = () => {
@@ -243,6 +238,10 @@ export default function PrintPage() {
   const filteredMakeupItems = makeupSearchText.trim().length >= 1
     ? makeupItems.filter((item) => item.barcode.includes(makeupSearchText.trim()) || item.product_name.includes(makeupSearchText.trim()))
     : makeupItems
+
+  // نطبّق نفس الاستثناء على نتائج مطابقة ملف الإكسل — الطباعة/التحميل الجماعي هنا يستبعد المكياج
+  const excelMatchedNonMakeup = excelMatchedItems.filter((item) => !item.is_makeup)
+  const excelMatchedMakeupCount = excelMatchedItems.length - excelMatchedNonMakeup.length
 
   useEffect(() => {
     if (!status) return
@@ -536,13 +535,13 @@ export default function PrintPage() {
   }
 
   const handleExcelAction = async (mode: 'download' | 'print') => {
-    if (excelMatchedItems.length === 0) {
-      setStatus('ما فيه منتجات مطابقة لرفعها — رفع ملف أول')
+    if (excelMatchedNonMakeup.length === 0) {
+      setStatus('ما فيه منتجات مطابقة (غير المكياج) لطباعتها — رفع ملف أول')
       return
     }
     if (mode === 'download') {
       setExcelGenerating(true)
-      await startBulkDownloadJob(excelMatchedItems, 'ملصقات_الملف_المرفوع')
+      await startBulkDownloadJob(excelMatchedNonMakeup, 'ملصقات_الملف_المرفوع')
       setExcelGenerating(false)
       return
     }
@@ -553,7 +552,7 @@ export default function PrintPage() {
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = await generatePdf(excelMatchedItems, BULK_SCALE, setStatus)
+      const doc = await generatePdf(excelMatchedNonMakeup, BULK_SCALE, setStatus)
       doc.autoPrint()
       const blobUrl = doc.output('bloburl')
       if (printWindow) {
@@ -605,57 +604,6 @@ export default function PrintPage() {
     }
   }
 
-  const handleCustomLabelAction = async (mode: 'download' | 'print') => {
-    if (!customName.trim() || !customPrevPrice || !customOfferPrice) {
-      setStatus('عبّي اسم المنتج والسعر السابق وسعر العرض أول')
-      return
-    }
-    if (!bgReady || !bgImageRef.current) {
-      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
-      return
-    }
-    const printWindow = mode === 'print' ? window.open('', '_blank') : null
-    setCustomGenerating(true)
-    setStatus('جاري تجهيز الملصق المتنوع...')
-    try {
-      await document.fonts.load('900 90px Tajawal')
-      await document.fonts.load('700 58px Tajawal')
-      await document.fonts.load('700 34px Tajawal')
-
-      const data: LabelData = {
-        name: customName.trim(),
-        offerPriceText: Number(customOfferPrice).toFixed(2),
-        prevPriceText: Number(customPrevPrice).toFixed(2),
-        barcodeText: customNote.trim(),
-      }
-
-      const canvas = await renderLabelCanvas(data)
-      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
-      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
-
-      if (mode === 'print') {
-        doc.autoPrint()
-        const blobUrl = doc.output('bloburl')
-        if (printWindow) {
-          printWindow.location.href = blobUrl as unknown as string
-          setStatus('تم فتح نافذة الطباعة')
-        } else {
-          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
-        }
-      } else {
-        doc.save(`ملصق_متنوع_${customName.trim()}.pdf`)
-        setStatus('تم تحميل الملصق المتنوع بنجاح')
-      }
-    } catch (err: any) {
-      if (printWindow) printWindow.close()
-      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
-    } finally {
-      setCustomGenerating(false)
-    }
-  }
-
-  // أداة تشخيص مؤقتة: تعرض الرسمة الخام (Canvas) مباشرة كصورة، بدون أي PDF نهائياً
-  // هذا يوضح فوراً هل المشكلة بالرسم نفسه أو بتحويله لملف
   const handleAction = async (item: OfferItem, mode: 'download' | 'print') => {
     if (!bgReady || !bgImageRef.current) {
       setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
@@ -696,12 +644,12 @@ export default function PrintPage() {
 
   return (
     <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
-      <InstallPWAButton />
+      <InstallPWAButtonAuto />
       <header className="bg-white border-b-4 border-[var(--navy)]">
         <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
-            <p className="text-[var(--red)] text-[11px] font-bold">واجهة الطباعة السريعة</p>
+            <p className="text-[var(--red)] text-sm font-bold">واجهة الطباعة السريعة ومتابعة العروض</p>
             <h1 className="text-[var(--navy)] text-base font-black">عروض عامة</h1>
           </div>
         </div>
@@ -721,15 +669,6 @@ export default function PrintPage() {
                 كل العروض
               </span>
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">{allItems.length}</span>
-            </button>
-            <button
-              onClick={() => setActiveSection('custom')}
-              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
-                activeSection === 'custom' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <Layers size={15} />
-              ملصق متنوع
             </button>
             <button
               onClick={() => setActiveSection('excel')}
@@ -785,7 +724,7 @@ export default function PrintPage() {
             >
               <span className="flex items-center gap-2">
                 <Layers size={15} />
-                مكياج
+                عروض المكياج
               </span>
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-pink-200 text-pink-700">{makeupItems.length}</span>
             </button>
@@ -839,64 +778,6 @@ export default function PrintPage() {
             </div>
           )}
 
-          {activeSection === 'custom' && (
-            <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
-              <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2 mb-1">
-                <Layers size={16} />
-                ملصق متنوع
-              </h2>
-              <p className="text-xs text-gray-500 font-medium mb-4">
-                لأي حالة خاصة — تشكيلة نكهات أو أحجام بنفس السعر
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                <input
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  placeholder="اسم/عنوان المنتج"
-                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                />
-                <input
-                  value={customPrevPrice}
-                  onChange={(e) => setCustomPrevPrice(e.target.value)}
-                  type="number"
-                  placeholder="السعر السابق"
-                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                />
-                <input
-                  value={customOfferPrice}
-                  onChange={(e) => setCustomOfferPrice(e.target.value)}
-                  type="number"
-                  placeholder="سعر العرض"
-                  className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                />
-                <input
-                  value={customNote}
-                  onChange={(e) => setCustomNote(e.target.value)}
-                  placeholder="ملاحظة مكان الباركود (اختياري)"
-                  className="sm:col-span-2 bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleCustomLabelAction('download')}
-                  disabled={customGenerating}
-                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  <Download size={13} />
-                  تحميل
-                </button>
-                <button
-                  onClick={() => handleCustomLabelAction('print')}
-                  disabled={customGenerating}
-                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  <Printer size={13} />
-                  {customGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
-                </button>
-              </div>
-            </div>
-          )}
-
           {activeSection === 'excel' && (
             <div className="space-y-4">
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-5 shadow-sm max-w-xl">
@@ -934,8 +815,15 @@ export default function PrintPage() {
                       <p className="text-[var(--red)] text-xs font-bold">ما تم لقاه بالعروض الحالية</p>
                       <p className="text-[var(--red)] font-black text-lg">{excelUnmatchedBarcodes.length}</p>
                     </div>
+                    {excelMatchedMakeupCount > 0 && (
+                      <div className="bg-pink-50 rounded-lg p-3 col-span-2">
+                        <p className="text-pink-700 text-xs font-bold">
+                          منهم {excelMatchedMakeupCount} فئة مكياج — مستثناة تلقائياً من الطباعة/التحميل هنا (روح تبويب "عروض المكياج" لطباعتها)
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  {excelMatchedItems.length > 0 && (
+                  {excelMatchedNonMakeup.length > 0 && (
                     <div className="p-4 pt-0 flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => handleExcelAction('download')}
@@ -1166,7 +1054,7 @@ export default function PrintPage() {
                 <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
                   <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
                     <Layers size={16} />
-                    منتجات المكياج ({filteredMakeupItems.length})
+                    عروض المكياج ({filteredMakeupItems.length})
                   </h2>
                 </div>
 
