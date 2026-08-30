@@ -104,6 +104,18 @@ function pdfToBlobUrl(doc: jsPDF): string {
   return URL.createObjectURL(blob)
 }
 
+// كروم أحياناً يتجاهل خاصية "تحميل" لروابط Blob الخاصة بـ PDF ويفتح معاينة بدل الحفظ —
+// هذا يفرض التحميل الفعلي عبر عنصر مؤقت يُنشأ ويُضغط برمجياً ثم يُحذف فوراً
+function forceDownload(url: string, filename: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
 function itemToLabelData(item: OfferItem): LabelData {
   return {
     name: item.product_name,
@@ -791,15 +803,14 @@ export default function PrintPage() {
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {readyDownloads.map((d, idx) => (
-                  <a
+                  <button
                     key={idx}
-                    href={d.url}
-                    download={d.filename}
+                    onClick={() => forceDownload(d.url, d.filename)}
                     className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
                   >
                     <Download size={14} />
                     تحميل هذا الجزء
-                  </a>
+                  </button>
                 ))}
                 {bulkJob && bulkJob.currentChunk + 1 < bulkJob.totalChunks && (
                   <button
