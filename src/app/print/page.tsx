@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx-js-style'
 import { supabase } from '../../lib/supabase'
 import InstallPWAButtonAuto from '../components/InstallPWAButtonAuto'
 import { Search, Printer, Download, Package, ListPlus, Layers, X, LayoutGrid, UploadCloud, ClipboardCheck } from 'lucide-react'
@@ -53,13 +53,44 @@ function normalizeBarcode(raw: any): string {
 }
 
 function downloadItemsAsExcel(items: OfferItem[], filename: string) {
-  const rows = items.map((item) => ({
-    الباركود: item.barcode,
-    'اسم المنتج': item.product_name,
-    'السعر السابق': item.previous_price,
-    'سعر العرض': item.offer_price,
-  }))
-  const worksheet = XLSX.utils.json_to_sheet(rows)
+  const headers = ['الباركود', 'اسم المنتج', 'السعر السابق', 'سعر العرض']
+  const rows = items.map((item) => [item.barcode, item.product_name, item.previous_price, item.offer_price])
+
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
+
+  const borderStyle = { style: 'thin', color: { rgb: '999999' } }
+  const cellBorder = { top: borderStyle, bottom: borderStyle, left: borderStyle, right: borderStyle }
+
+  const headerStyle = {
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    fill: { fgColor: { rgb: '150971' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: cellBorder,
+  }
+  const cellStyleBase = {
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: cellBorder,
+  }
+
+  const range = XLSX.utils.decode_range(worksheet['!ref']!)
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const address = XLSX.utils.encode_cell({ r: R, c: C })
+      if (!worksheet[address]) continue
+      if (R === 0) {
+        worksheet[address].s = headerStyle
+      } else {
+        worksheet[address].s = {
+          ...cellStyleBase,
+          fill: { fgColor: { rgb: R % 2 === 0 ? 'F2F2F2' : 'FFFFFF' } },
+        }
+      }
+    }
+  }
+
+  worksheet['!cols'] = [{ wch: 18 }, { wch: 40 }, { wch: 14 }, { wch: 14 }]
+  worksheet['!rows'] = [{ hpt: 22 }]
+
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, 'العروض')
   XLSX.writeFile(workbook, `${filename}.xlsx`)
@@ -538,6 +569,7 @@ export default function PrintPage() {
       setStatus('ما فيه منتجات مطابقة (غير المكياج) لطباعتها — رفع ملف أول')
       return
     }
+    setExcelTotalRead(null)
     if (mode === 'download') {
       setExcelGenerating(true)
       await startBulkDownloadJob(excelMatchedNonMakeup, 'ملصقات_الملف_المرفوع')
@@ -803,10 +835,6 @@ export default function PrintPage() {
                     <div className="bg-emerald-50 rounded-lg p-3">
                       <p className="text-emerald-700 text-xs font-bold">له عرض حالياً</p>
                       <p className="text-emerald-700 font-black text-lg">{excelMatchedItems.length}</p>
-                    </div>
-                    <div className="bg-[var(--red)]/5 rounded-lg p-3 col-span-2">
-                      <p className="text-[var(--red)] text-xs font-bold">ما تم لقاه بالعروض الحالية</p>
-                      <p className="text-[var(--red)] font-black text-lg">{excelUnmatchedBarcodes.length}</p>
                     </div>
                     {excelMatchedMakeupCount > 0 && (
                       <div className="bg-pink-50 rounded-lg p-3 col-span-2">
