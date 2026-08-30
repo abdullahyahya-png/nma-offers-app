@@ -495,7 +495,7 @@ export default function PrintPage() {
     for (let i = 0; i < items.length; i++) {
       if (onProgress) {
         onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((r) => setTimeout(r, 15))
       }
       let canvas: HTMLCanvasElement
       try {
@@ -509,76 +509,6 @@ export default function PrintPage() {
         // عند تجميع عدد كبير من الصور بملف واحد
         const jpegData = canvas.toDataURL('image/jpeg', 0.92)
         doc.addImage(jpegData, 'JPEG', 0, 0, 296.28, 496.2)
-      } catch (embedErr: any) {
-        throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
-      }
-    }
-
-    return doc
-  }
-
-  // نسخة خاصة للطباعة المباشرة: 4 ملصقات بالورقة الواحدة (شبكة 2×2) على ورق A4 عادي
-  const generatePdfGrid4 = async (
-    items: OfferItem[],
-    scale: number,
-    onProgress?: (msg: string) => void
-  ): Promise<jsPDF> => {
-    const bg = getScaledBackground(scale)
-
-    if (bg) {
-      const testCanvas = document.createElement('canvas')
-      testCanvas.width = 10
-      testCanvas.height = 10
-      const testCtx = testCanvas.getContext('2d')!
-      testCtx.drawImage(bg, 0, 0, 10, 10)
-      try {
-        testCanvas.toDataURL()
-      } catch (taintErr: any) {
-        throw new Error(
-          `مشكلة تلوّث الكانفاس (Tainted Canvas) — الخلفية جاية من مصدر يمنع تصديرها: ${taintErr?.message || taintErr}`
-        )
-      }
-    }
-
-    const PAGE_W = 595.28
-    const PAGE_H = 841.89
-    const MARGIN = 20
-    const GAP = 15
-    const cellW = (PAGE_W - MARGIN * 2 - GAP) / 2
-    const cellH = (PAGE_H - MARGIN * 2 - GAP) / 2
-    const labelRatio = 296.28 / 496.2
-    let fitW = cellW
-    let fitH = fitW / labelRatio
-    if (fitH > cellH) {
-      fitH = cellH
-      fitW = fitH * labelRatio
-    }
-
-    const doc = new jsPDF({ unit: 'pt', format: [PAGE_W, PAGE_H] })
-
-    for (let i = 0; i < items.length; i++) {
-      if (onProgress) {
-        onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
-        await new Promise((r) => setTimeout(r, 0))
-      }
-      const posInPage = i % 4
-      if (i > 0 && posInPage === 0) doc.addPage()
-      const col = posInPage % 2
-      const row = Math.floor(posInPage / 2)
-      const cellX = MARGIN + col * (cellW + GAP)
-      const cellY = MARGIN + row * (cellH + GAP)
-      const x = cellX + (cellW - fitW) / 2
-      const y = cellY + (cellH - fitH) / 2
-
-      let canvas: HTMLCanvasElement
-      try {
-        canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
-      } catch (renderErr: any) {
-        throw new Error(`فشل رسم الملصق رقم ${i + 1} (${items[i].barcode}): ${renderErr?.message || renderErr}`)
-      }
-      try {
-        const jpegData = canvas.toDataURL('image/jpeg', 0.92)
-        doc.addImage(jpegData, 'JPEG', x, y, fitW, fitH)
       } catch (embedErr: any) {
         throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
       }
@@ -657,71 +587,25 @@ export default function PrintPage() {
     setDownloadsGenerating(false)
   }
 
-  const handleExcelAction = async (mode: 'download' | 'print') => {
+  const handleExcelAction = async () => {
     if (excelMatchedNonMakeup.length === 0) {
       setStatus('ما فيه منتجات مطابقة (غير المكياج) لطباعتها — رفع ملف أول')
       return
     }
     setExcelTotalRead(null)
-    if (mode === 'download') {
-      setExcelGenerating(true)
-      await startBulkDownloadJob(excelMatchedNonMakeup, 'ملصقات_الملف_المرفوع')
-      setExcelGenerating(false)
-      return
-    }
     setExcelGenerating(true)
-    try {
-      await document.fonts.load('900 90px Tajawal')
-      await document.fonts.load('700 58px Tajawal')
-      await document.fonts.load('700 34px Tajawal')
-
-      const doc = await generatePdfGrid4(excelMatchedNonMakeup, BULK_SCALE, setStatus)
-      doc.autoPrint()
-      const blobUrl = pdfToBlobUrl(doc)
-      const printWindow = window.open(blobUrl, '_blank')
-      if (printWindow) {
-        setStatus('تم فتح نافذة الطباعة')
-      } else {
-        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
-      }
-    } catch (err: any) {
-      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
-    } finally {
-      setExcelGenerating(false)
-    }
+    await startBulkDownloadJob(excelMatchedNonMakeup, 'ملصقات_الملف_المرفوع')
+    setExcelGenerating(false)
   }
 
-  const handleQueueAction = async (mode: 'download' | 'print') => {
+  const handleQueueAction = async () => {
     if (printQueue.length === 0) {
       setStatus('قائمة الطباعة فاضية — أضف منتجات أول')
       return
     }
-    if (mode === 'download') {
-      setGeneratingQueue(true)
-      await startBulkDownloadJob(printQueue, 'ملصقات_مختارة')
-      setGeneratingQueue(false)
-      return
-    }
     setGeneratingQueue(true)
-    try {
-      await document.fonts.load('900 90px Tajawal')
-      await document.fonts.load('700 58px Tajawal')
-      await document.fonts.load('700 34px Tajawal')
-
-      const doc = await generatePdfGrid4(printQueue, BULK_SCALE, setStatus)
-      doc.autoPrint()
-      const blobUrl = pdfToBlobUrl(doc)
-      const printWindow = window.open(blobUrl, '_blank')
-      if (printWindow) {
-        setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
-      } else {
-        setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
-      }
-    } catch (err: any) {
-      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
-    } finally {
-      setGeneratingQueue(false)
-    }
+    await startBulkDownloadJob(printQueue, 'ملصقات_مختارة')
+    setGeneratingQueue(false)
   }
 
   const handleAction = async (item: OfferItem, mode: 'download' | 'print') => {
@@ -935,20 +819,12 @@ export default function PrintPage() {
                   {excelMatchedNonMakeup.length > 0 && (
                     <div className="p-4 pt-0 flex flex-wrap items-center gap-2">
                       <button
-                        onClick={() => handleExcelAction('download')}
+                        onClick={handleExcelAction}
                         disabled={excelGenerating}
                         className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
                       >
                         <Download size={13} />
-                        تحميل ملصقات المطابقة
-                      </button>
-                      <button
-                        onClick={() => handleExcelAction('print')}
-                        disabled={excelGenerating}
-                        className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        <Printer size={13} />
-                        {excelGenerating ? 'جاري التجهيز...' : 'طباعة مباشرة'}
+                        {excelGenerating ? 'جاري التجهيز...' : 'تحميل ملصقات المطابقة'}
                       </button>
                       <button
                         onClick={handleAddExcelResultsToQueue}
@@ -1007,20 +883,12 @@ export default function PrintPage() {
                 {printQueue.length > 0 && (
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleQueueAction('download')}
+                      onClick={handleQueueAction}
                       disabled={generatingQueue}
                       className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
                     >
                       <Download size={13} />
-                      تحميل الكل
-                    </button>
-                    <button
-                      onClick={() => handleQueueAction('print')}
-                      disabled={generatingQueue}
-                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      <Printer size={13} />
-                      {generatingQueue ? 'جاري التوليد...' : 'طباعة الكل'}
+                      {generatingQueue ? 'جاري التوليد...' : 'تحميل الكل'}
                     </button>
                     <button onClick={clearQueue} className="text-[var(--red)] hover:underline text-xs font-bold">
                       تفريغ
