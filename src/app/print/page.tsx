@@ -517,6 +517,76 @@ export default function PrintPage() {
     return doc
   }
 
+  // نسخة خاصة للطباعة المباشرة: 4 ملصقات بالورقة الواحدة (شبكة 2×2) على ورق A4 عادي
+  const generatePdfGrid4 = async (
+    items: OfferItem[],
+    scale: number,
+    onProgress?: (msg: string) => void
+  ): Promise<jsPDF> => {
+    const bg = getScaledBackground(scale)
+
+    if (bg) {
+      const testCanvas = document.createElement('canvas')
+      testCanvas.width = 10
+      testCanvas.height = 10
+      const testCtx = testCanvas.getContext('2d')!
+      testCtx.drawImage(bg, 0, 0, 10, 10)
+      try {
+        testCanvas.toDataURL()
+      } catch (taintErr: any) {
+        throw new Error(
+          `مشكلة تلوّث الكانفاس (Tainted Canvas) — الخلفية جاية من مصدر يمنع تصديرها: ${taintErr?.message || taintErr}`
+        )
+      }
+    }
+
+    const PAGE_W = 595.28
+    const PAGE_H = 841.89
+    const MARGIN = 20
+    const GAP = 15
+    const cellW = (PAGE_W - MARGIN * 2 - GAP) / 2
+    const cellH = (PAGE_H - MARGIN * 2 - GAP) / 2
+    const labelRatio = 296.28 / 496.2
+    let fitW = cellW
+    let fitH = fitW / labelRatio
+    if (fitH > cellH) {
+      fitH = cellH
+      fitW = fitH * labelRatio
+    }
+
+    const doc = new jsPDF({ unit: 'pt', format: [PAGE_W, PAGE_H] })
+
+    for (let i = 0; i < items.length; i++) {
+      if (onProgress) {
+        onProgress(`جاري توليد الملصق ${i + 1} من ${items.length}...`)
+        await new Promise((r) => setTimeout(r, 0))
+      }
+      const posInPage = i % 4
+      if (i > 0 && posInPage === 0) doc.addPage()
+      const col = posInPage % 2
+      const row = Math.floor(posInPage / 2)
+      const cellX = MARGIN + col * (cellW + GAP)
+      const cellY = MARGIN + row * (cellH + GAP)
+      const x = cellX + (cellW - fitW) / 2
+      const y = cellY + (cellH - fitH) / 2
+
+      let canvas: HTMLCanvasElement
+      try {
+        canvas = await renderLabelCanvas(itemToLabelData(items[i]), scale, bg)
+      } catch (renderErr: any) {
+        throw new Error(`فشل رسم الملصق رقم ${i + 1} (${items[i].barcode}): ${renderErr?.message || renderErr}`)
+      }
+      try {
+        const jpegData = canvas.toDataURL('image/jpeg', 0.92)
+        doc.addImage(jpegData, 'JPEG', x, y, fitW, fitH)
+      } catch (embedErr: any) {
+        throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
+      }
+    }
+
+    return doc
+  }
+
   const BULK_CHUNK_SIZE = 100
 
   // يولّد جزء واحد بس بكل مرة (بدل كل الأجزاء دفعة وحدة) — يمنع تراكم الذاكرة وتجمد المتصفح
@@ -599,24 +669,22 @@ export default function PrintPage() {
       setExcelGenerating(false)
       return
     }
-    const printWindow = window.open('', '_blank')
     setExcelGenerating(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = await generatePdf(excelMatchedNonMakeup, BULK_SCALE, setStatus)
+      const doc = await generatePdfGrid4(excelMatchedNonMakeup, BULK_SCALE, setStatus)
       doc.autoPrint()
       const blobUrl = pdfToBlobUrl(doc)
+      const printWindow = window.open(blobUrl, '_blank')
       if (printWindow) {
-        printWindow.location.href = blobUrl as unknown as string
         setStatus('تم فتح نافذة الطباعة')
       } else {
         setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
       }
     } catch (err: any) {
-      if (printWindow) printWindow.close()
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
       setExcelGenerating(false)
@@ -634,24 +702,22 @@ export default function PrintPage() {
       setGeneratingQueue(false)
       return
     }
-    const printWindow = window.open('', '_blank')
     setGeneratingQueue(true)
     try {
       await document.fonts.load('900 90px Tajawal')
       await document.fonts.load('700 58px Tajawal')
       await document.fonts.load('700 34px Tajawal')
 
-      const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
+      const doc = await generatePdfGrid4(printQueue, BULK_SCALE, setStatus)
       doc.autoPrint()
       const blobUrl = pdfToBlobUrl(doc)
+      const printWindow = window.open(blobUrl, '_blank')
       if (printWindow) {
-        printWindow.location.href = blobUrl as unknown as string
         setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
       } else {
         setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع وحاول من جديد')
       }
     } catch (err: any) {
-      if (printWindow) printWindow.close()
       setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
     } finally {
       setGeneratingQueue(false)
@@ -1182,6 +1248,7 @@ export default function PrintPage() {
                                   className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
                                 >
                                   <ListPlus size={13} />
+                                  أضف
                                 </button>
                                 <button
                                   onClick={() => handleAction(item, 'download')}
@@ -1311,6 +1378,7 @@ export default function PrintPage() {
                                   className="flex items-center gap-1.5 bg-white border-2 border-emerald-300 hover:bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-2 rounded-lg transition-colors disabled:opacity-40"
                                 >
                                   <ListPlus size={13} />
+                                  أضف
                                 </button>
                                 <button
                                   onClick={() => handleAction(item, 'download')}
