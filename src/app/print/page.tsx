@@ -485,7 +485,10 @@ export default function PrintPage() {
       }
       if (i > 0) doc.addPage()
       try {
-        doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+        // JPEG بجودة عالية يقلل حجم بيانات كل صورة كثير مقارنة بـ PNG — يمنع تجاوز حد طول النص بالمتصفح
+        // عند تجميع عدد كبير من الصور بملف واحد
+        const jpegData = canvas.toDataURL('image/jpeg', 0.92)
+        doc.addImage(jpegData, 'JPEG', 0, 0, 296.28, 496.2)
       } catch (embedErr: any) {
         throw new Error(`فشل تضمين الملصق رقم ${i + 1} (${items[i].barcode}) بالملف: ${embedErr?.message || embedErr}`)
       }
@@ -494,7 +497,7 @@ export default function PrintPage() {
     return doc
   }
 
-  const BULK_CHUNK_SIZE = 100
+  const BULK_CHUNK_SIZE = 60
 
   // يولّد جزء واحد بس بكل مرة (بدل كل الأجزاء دفعة وحدة) — يمنع تراكم الذاكرة وتجمد المتصفح
   const generateBulkChunk = async (
