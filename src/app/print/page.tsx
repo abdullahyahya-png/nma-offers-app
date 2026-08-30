@@ -96,6 +96,14 @@ function downloadItemsAsExcel(items: OfferItem[], filename: string) {
   XLSX.writeFile(workbook, `${filename}.xlsx`)
 }
 
+// يتجاوز خلل معروف بمكتبة jsPDF (Array.join Invalid string length) يصير تحديداً بكروم مع ملفات كبيرة —
+// نستخدم ArrayBuffer وننشئ الـ Blob بأنفسنا بدل الاعتماد على تحويلها الداخلي القديم القائم على النصوص
+function pdfToBlobUrl(doc: jsPDF): string {
+  const arrayBuffer = doc.output('arraybuffer')
+  const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
+  return URL.createObjectURL(blob)
+}
+
 function itemToLabelData(item: OfferItem): LabelData {
   return {
     name: item.product_name,
@@ -497,7 +505,7 @@ export default function PrintPage() {
     return doc
   }
 
-  const BULK_CHUNK_SIZE = 60
+  const BULK_CHUNK_SIZE = 100
 
   // يولّد جزء واحد بس بكل مرة (بدل كل الأجزاء دفعة وحدة) — يمنع تراكم الذاكرة وتجمد المتصفح
   const generateBulkChunk = async (
@@ -524,7 +532,7 @@ export default function PrintPage() {
         setStatus(`(جزء ${chunkIndex + 1} من ${totalChunks}) ${msg}`)
       )
       const partSuffix = totalChunks > 1 ? `_جزء${chunkIndex + 1}من${totalChunks}` : ''
-      const url = doc.output('bloburl') as unknown as string
+      const url = pdfToBlobUrl(doc)
       setReadyDownloads([{ url, filename: `${baseFilename}${partSuffix}.pdf` }])
       setBulkJob({ items, baseFilename, totalChunks, currentChunk: chunkIndex })
       setStatus(`جهّزنا الجزء ${chunkIndex + 1} من ${totalChunks} (${chunkItems.length} ملصق) — اضغط زر التحميل تحت`)
@@ -588,7 +596,7 @@ export default function PrintPage() {
 
       const doc = await generatePdf(excelMatchedNonMakeup, BULK_SCALE, setStatus)
       doc.autoPrint()
-      const blobUrl = doc.output('bloburl')
+      const blobUrl = pdfToBlobUrl(doc)
       if (printWindow) {
         printWindow.location.href = blobUrl as unknown as string
         setStatus('تم فتح نافذة الطباعة')
@@ -623,7 +631,7 @@ export default function PrintPage() {
 
       const doc = await generatePdf(printQueue, BULK_SCALE, setStatus)
       doc.autoPrint()
-      const blobUrl = doc.output('bloburl')
+      const blobUrl = pdfToBlobUrl(doc)
       if (printWindow) {
         printWindow.location.href = blobUrl as unknown as string
         setStatus(`تم توليد ${printQueue.length} ملصق وفتح نافذة الطباعة`)
@@ -657,7 +665,7 @@ export default function PrintPage() {
 
       if (mode === 'print') {
         doc.autoPrint()
-        const blobUrl = doc.output('bloburl')
+        const blobUrl = pdfToBlobUrl(doc)
         if (printWindow) {
           printWindow.location.href = blobUrl as unknown as string
           setStatus('تم فتح نافذة الطباعة')
