@@ -37,8 +37,9 @@ const POS = {
   barcode: { xFrac: 0.5, yFrac: 968 / REF_H, fontPx: 33 },
 }
 
-const NAVY = '#150971'
-const RED = '#C00000'
+const RED = '#8B0000'
+// لون زيتوني لاسم المنتج والباركود — يتناسب مع القالب الجديد (خلفية بيضاء بمنطقة النص)
+const OLIVE = '#6B6B1F'
 
 function normalizeBarcode(raw: any): string {
   if (raw === null || raw === undefined) return ''
@@ -405,24 +406,24 @@ export default function PrintPage() {
     ctx.direction = 'rtl' as any
 
     ctx.font = `900 ${POS.offerPrice.fontPx * scale}px Tajawal`
-    ctx.fillStyle = NAVY
+    ctx.fillStyle = RED
     ctx.fillText(data.offerPriceText, canvas.width * POS.offerPrice.xFrac, canvas.height * POS.offerPrice.yFrac)
 
     ctx.font = `700 ${POS.prevPrice.fontPx * scale}px Tajawal`
-    ctx.fillStyle = RED
+    ctx.fillStyle = '#ffffff'
     const prevX = canvas.width * POS.prevPrice.xFrac
     const prevY = canvas.height * POS.prevPrice.yFrac
     ctx.fillText(data.prevPriceText, prevX, prevY)
     const prevWidth = ctx.measureText(data.prevPriceText).width
     ctx.beginPath()
-    ctx.strokeStyle = RED
+    ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 3 * scale
     ctx.moveTo(prevX - prevWidth / 2, prevY)
     ctx.lineTo(prevX + prevWidth / 2, prevY)
     ctx.stroke()
 
     ctx.font = `700 ${POS.name.fontPx * scale}px Tajawal`
-    ctx.fillStyle = NAVY
+    ctx.fillStyle = OLIVE
     const maxWidth = canvas.width * 0.82
     const words = data.name.split(' ')
     const lines: string[] = []
@@ -445,7 +446,7 @@ export default function PrintPage() {
     })
 
     ctx.font = `700 ${POS.barcode.fontPx * scale}px Tajawal`
-    ctx.fillStyle = RED
+    ctx.fillStyle = OLIVE
     ctx.fillText(data.barcodeText, canvas.width * POS.barcode.xFrac, canvas.height * POS.barcode.yFrac)
 
     return canvas
