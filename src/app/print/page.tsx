@@ -34,7 +34,7 @@ const POS = {
   offerPrice: { xFrac: 0.484, yFrac: 465 / REF_H, fontPx: 90 },
   prevPrice: { xFrac: 0.47, yFrac: 609 / REF_H, fontPx: 58 },
   name: { xFrac: 0.5, yFrac: 710 / REF_H, fontPx: 34, lineSpacingPx: 38 },
-  barcode: { xFrac: 0.5, yFrac: 868 / REF_H, fontPx: 33 },
+  barcode: { xFrac: 0.5, yFrac: 883 / REF_H, fontPx: 33 },
 }
 
 const RED = '#C00000'
@@ -354,7 +354,12 @@ export default function PrintPage() {
   const periodicCheckedCount = periodicRelevantItems.filter((item) => periodicChecks[item.barcode]).length
 
   const fetchOffers = async () => {
-    const { data } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
+    // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
+    const { data } = await supabase
+      .from('offer_items')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(0, 19999)
     if (data) setAllItems(data.filter((i) => i.is_active !== false))
   }
 
@@ -409,7 +414,7 @@ export default function PrintPage() {
     ctx.fillStyle = RED
     ctx.fillText(data.offerPriceText, canvas.width * POS.offerPrice.xFrac, canvas.height * POS.offerPrice.yFrac)
 
-    ctx.font = `700 ${POS.prevPrice.fontPx * scale}px Tajawal`
+    ctx.font = `900 ${POS.prevPrice.fontPx * scale}px Tajawal`
     ctx.fillStyle = '#ffffff'
     const prevX = canvas.width * POS.prevPrice.xFrac
     const prevY = canvas.height * POS.prevPrice.yFrac
@@ -424,7 +429,7 @@ export default function PrintPage() {
 
     ctx.font = `700 ${POS.name.fontPx * scale}px Tajawal`
     ctx.fillStyle = OLIVE
-    const maxWidth = canvas.width * 0.82
+    const maxWidth = canvas.width * 0.7
     const words = data.name.split(' ')
     const lines: string[] = []
     let currentLine = ''

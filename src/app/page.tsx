@@ -200,12 +200,15 @@ export default function AdminPage() {
     }, 450)
   }
 
+  // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
+  // عشان ما تنقص منتجات لو تجاوز عددها 1000 (كان سبب ظهور "1000" بس رغم رفع أكثر)
   const fetchItems = async () => {
     setLoading(true)
     const { data, error } = await supabase
       .from('offer_items')
       .select('*')
       .order('created_at', { ascending: false })
+      .range(0, 19999)
     if (!error && data) setItems(data)
     setLoading(false)
   }

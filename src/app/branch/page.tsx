@@ -333,9 +333,15 @@ export default function BranchPage() {
     setConfirmedRemovalIds(removalData ? removalData.map((d) => d.batch_id) : [])
   }
 
+  // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
+  // عشان ما تنقص منتجات لو تجاوز عددها 1000
   const fetchOffersData = async () => {
     const { data: branchesData } = await supabase.from('branches').select('id, name').order('name')
-    const { data: itemsData } = await supabase.from('offer_items').select('*').order('created_at', { ascending: false })
+    const { data: itemsData } = await supabase
+      .from('offer_items')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(0, 19999)
     const { data: batchesData } = await supabase
       .from('offer_batches')
       .select('*')
