@@ -34,7 +34,7 @@ const POS = {
   offerPrice: { xFrac: 0.484, yFrac: 465 / REF_H, fontPx: 90 },
   prevPrice: { xFrac: 0.47, yFrac: 609 / REF_H, fontPx: 58 },
   name: { xFrac: 0.5, yFrac: 710 / REF_H, fontPx: 34, lineSpacingPx: 38 },
-  barcode: { xFrac: 0.5, yFrac: 851 / REF_H, fontPx: 33 },
+  barcode: { xFrac: 0.5, yFrac: 871 / REF_H, fontPx: 33 },
 }
 
 const RED = '#C00000'
