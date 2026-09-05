@@ -335,13 +335,29 @@ export default function BranchPage() {
 
   // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
   // عشان ما تنقص منتجات لو تجاوز عددها 1000
+  // نطاق (range) واحد ما يكفي — إعدادات سوبابيس نفسها فيها حد أقصى (Max Rows) بمستوى الخادم
+  // ما يتجاوزه أي طلب. الحل: نجيب البيانات على دفعات متتالية لين نوصل لنهاية البيانات فعلياً
+  const fetchAllOfferItems = async () => {
+    let all: any[] = []
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('offer_items')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error || !data) break
+      all = all.concat(data)
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return all
+  }
+
   const fetchOffersData = async () => {
     const { data: branchesData } = await supabase.from('branches').select('id, name').order('name')
-    const { data: itemsData } = await supabase
-      .from('offer_items')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(0, 19999)
+    const itemsData = await fetchAllOfferItems()
     const { data: batchesData } = await supabase
       .from('offer_batches')
       .select('*')

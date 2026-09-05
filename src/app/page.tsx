@@ -202,14 +202,31 @@ export default function AdminPage() {
 
   // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
   // عشان ما تنقص منتجات لو تجاوز عددها 1000 (كان سبب ظهور "1000" بس رغم رفع أكثر)
+  // نطاق (range) واحد ما يكفي — إعدادات سوبابيس نفسها فيها حد أقصى (Max Rows) بمستوى الخادم
+  // ما يتجاوزه أي طلب مهما كان الـ range المطلوب. الحل: نجيب البيانات على دفعات (صفحات) متتالية
+  // كل دفعة أقصى 1000، ونكرر لين نوصل لنهاية البيانات فعلياً
+  const fetchAllRows = async (table: string, orderCol: string) => {
+    let all: any[] = []
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .order(orderCol, { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error || !data) break
+      all = all.concat(data)
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return all
+  }
+
   const fetchItems = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('offer_items')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(0, 19999)
-    if (!error && data) setItems(data)
+    const data = await fetchAllRows('offer_items', 'created_at')
+    setItems(data)
     setLoading(false)
   }
 

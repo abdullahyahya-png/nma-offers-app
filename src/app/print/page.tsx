@@ -353,14 +353,24 @@ export default function PrintPage() {
   const periodicRelevantItems = allItems.filter((item) => !periodicUnavailable[item.barcode])
   const periodicCheckedCount = periodicRelevantItems.filter((item) => periodicChecks[item.barcode]).length
 
+  // نطاق (range) واحد ما يكفي — إعدادات سوبابيس نفسها فيها حد أقصى (Max Rows) بمستوى الخادم
+  // ما يتجاوزه أي طلب. الحل: نجيب البيانات على دفعات متتالية لين نوصل لنهاية البيانات فعلياً
   const fetchOffers = async () => {
-    // سوبابيس تجيب افتراضياً أقصى 1000 صف بكل طلب — نطلب صراحة نطاق أوسع بكثير
-    const { data } = await supabase
-      .from('offer_items')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(0, 19999)
-    if (data) setAllItems(data.filter((i) => i.is_active !== false))
+    let all: any[] = []
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('offer_items')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error || !data) break
+      all = all.concat(data)
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    setAllItems(all.filter((i) => i.is_active !== false))
   }
 
   useEffect(() => {
