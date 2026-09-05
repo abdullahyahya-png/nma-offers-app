@@ -34,7 +34,7 @@ const POS = {
   offerPrice: { xFrac: 0.484, yFrac: 465 / REF_H, fontPx: 90 },
   prevPrice: { xFrac: 0.47, yFrac: 609 / REF_H, fontPx: 58 },
   name: { xFrac: 0.5, yFrac: 710 / REF_H, fontPx: 34, lineSpacingPx: 38 },
-  barcode: { xFrac: 0.5, yFrac: 883 / REF_H, fontPx: 33 },
+  barcode: { xFrac: 0.5, yFrac: 851 / REF_H, fontPx: 33 },
 }
 
 const RED = '#C00000'
@@ -437,24 +437,33 @@ export default function PrintPage() {
     ctx.lineTo(prevX + prevWidth / 2, prevY)
     ctx.stroke()
 
-    ctx.font = `700 ${POS.name.fontPx * scale}px Tajawal`
-    ctx.fillStyle = OLIVE
     const maxWidth = canvas.width * 0.7
-    const words = data.name.split(' ')
-    const lines: string[] = []
-    let currentLine = ''
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word
-      if (ctx.measureText(testLine).width > maxWidth && currentLine) {
-        lines.push(currentLine)
-        currentLine = word
-      } else {
-        currentLine = testLine
+    let nameFontPx = POS.name.fontPx * scale
+    let nameLines: string[] = []
+    const minNameFontPx = 20 * scale
+    while (true) {
+      ctx.font = `700 ${nameFontPx}px Tajawal`
+      const words = data.name.split(' ')
+      const lines: string[] = []
+      let currentLine = ''
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word
+        if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+          lines.push(currentLine)
+          currentLine = word
+        } else {
+          currentLine = testLine
+        }
       }
+      if (currentLine) lines.push(currentLine)
+      if (lines.length <= 2 || nameFontPx <= minNameFontPx) {
+        nameLines = lines.slice(0, 2)
+        break
+      }
+      nameFontPx -= 2 * scale
     }
-    if (currentLine) lines.push(currentLine)
-    const nameLines = lines.slice(0, 2)
-    const lineSpacing = POS.name.lineSpacingPx * scale
+    ctx.fillStyle = OLIVE
+    const lineSpacing = (POS.name.lineSpacingPx * scale) * (nameFontPx / (POS.name.fontPx * scale))
     const startY = canvas.height * POS.name.yFrac - ((nameLines.length - 1) * lineSpacing) / 2
     nameLines.forEach((line, i) => {
       ctx.fillText(line, canvas.width * POS.name.xFrac, startY + i * lineSpacing)
