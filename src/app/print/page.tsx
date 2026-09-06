@@ -675,7 +675,7 @@ export default function PrintPage() {
     <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
       <InstallPWAButtonAuto />
       <header className="bg-white border-b-4 border-[var(--navy)]">
-        <div className="w-full max-w-6xl mx-auto px-4 py-4 flex items-center gap-3">
+        <div className="w-full max-w-[1800px] mx-auto px-4 py-4 flex items-center gap-3">
           <img src="/logo.png" alt="شعار العروض" className="w-12 h-12 object-contain shrink-0" />
           <div>
             <p className="text-[var(--red)] text-sm font-bold">واجهة الطباعة السريعة ومتابعة العروض</p>
@@ -684,7 +684,7 @@ export default function PrintPage() {
         </div>
       </header>
 
-      <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 flex flex-col md:flex-row gap-4 md:gap-6 items-start">
+      <div className="w-full max-w-[1800px] mx-auto px-3 sm:px-4 py-4 sm:py-6 flex flex-col md:flex-row gap-4 md:gap-6 items-start">
         <aside className="w-full md:w-64 md:shrink-0 md:sticky md:top-6">
           <div className="w-full grid grid-cols-2 md:flex md:flex-col gap-1.5 bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-2 shadow-sm">
             <button
