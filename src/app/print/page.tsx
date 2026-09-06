@@ -144,6 +144,7 @@ export default function PrintPage() {
   const [downloadsGenerating, setDownloadsGenerating] = useState(false)
   const [readyDownloads, setReadyDownloads] = useState<{ url: string; filename: string }[]>([])
   const [periodicChecks, setPeriodicChecks] = useState<Record<string, boolean>>({})
+  const [periodicSubView, setPeriodicSubView] = useState<'care' | 'makeup'>('care')
   const [periodicUnavailable, setPeriodicUnavailable] = useState<Record<string, boolean>>({})
   const [bulkJob, setBulkJob] = useState<{
     items: OfferItem[]
@@ -353,6 +354,15 @@ export default function PrintPage() {
   }
 
   // نستثني "غير المتوفر بفرعي" من العدّاد — النسبة تحسب بس على المنتجات المتوفرة فعلاً
+  // مقسّمة لقسمين: عناية (غير المكياج) ومكياج، كل وحد بعدّاده الخاص
+  const periodicCareItems = allItems.filter((item) => !item.is_makeup)
+  const periodicMakeupItems = allItems.filter((item) => item.is_makeup)
+  const periodicCareRelevant = periodicCareItems.filter((item) => !periodicUnavailable[item.barcode])
+  const periodicMakeupRelevant = periodicMakeupItems.filter((item) => !periodicUnavailable[item.barcode])
+  const periodicCareCheckedCount = periodicCareRelevant.filter((item) => periodicChecks[item.barcode]).length
+  const periodicMakeupCheckedCount = periodicMakeupRelevant.filter((item) => periodicChecks[item.barcode]).length
+
+  // نستخدمها بالعدّاد الإجمالي بالشريط الجانبي
   const periodicRelevantItems = allItems.filter((item) => !periodicUnavailable[item.barcode])
   const periodicCheckedCount = periodicRelevantItems.filter((item) => periodicChecks[item.barcode]).length
 
@@ -965,25 +975,55 @@ export default function PrintPage() {
                     بدء دورة تشييك جديدة
                   </button>
                 </div>
+
+                <div className="flex items-center gap-2 mb-4">
+                  <button
+                    onClick={() => setPeriodicSubView('care')}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
+                      periodicSubView === 'care' ? 'bg-[var(--navy)] text-white' : 'bg-white border-2 border-[var(--navy)]/15 text-[var(--navy)] hover:bg-[var(--navy)]/10'
+                    }`}
+                  >
+                    تشييك عناية ({periodicCareItems.length})
+                  </button>
+                  <button
+                    onClick={() => setPeriodicSubView('makeup')}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
+                      periodicSubView === 'makeup' ? 'bg-pink-600 text-white' : 'bg-white border-2 border-pink-300 text-pink-700 hover:bg-pink-50'
+                    }`}
+                  >
+                    تشييك مكياج ({periodicMakeupItems.length})
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-3">
                   <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
                     <div
-                      className="bg-emerald-500 h-full transition-all"
-                      style={{ width: `${periodicRelevantItems.length > 0 ? (periodicCheckedCount / periodicRelevantItems.length) * 100 : 0}%` }}
+                      className={`h-full transition-all ${periodicSubView === 'makeup' ? 'bg-pink-500' : 'bg-emerald-500'}`}
+                      style={{
+                        width: `${
+                          periodicSubView === 'makeup'
+                            ? (periodicMakeupRelevant.length > 0 ? (periodicMakeupCheckedCount / periodicMakeupRelevant.length) * 100 : 0)
+                            : (periodicCareRelevant.length > 0 ? (periodicCareCheckedCount / periodicCareRelevant.length) * 100 : 0)
+                        }%`,
+                      }}
                     />
                   </div>
                   <span className="text-xs font-black text-[var(--navy)] shrink-0">
-                    {periodicCheckedCount} من {periodicRelevantItems.length}
+                    {periodicSubView === 'makeup'
+                      ? `${periodicMakeupCheckedCount} من ${periodicMakeupRelevant.length}`
+                      : `${periodicCareCheckedCount} من ${periodicCareRelevant.length}`}
                   </span>
                 </div>
               </div>
 
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
                 <div className="divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
-                  {allItems.length === 0 && (
-                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه عروض حالياً</p>
+                  {(periodicSubView === 'makeup' ? periodicMakeupItems : periodicCareItems).length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">
+                      {periodicSubView === 'makeup' ? 'ما فيه منتجات مكياج حالياً' : 'ما فيه عروض حالياً'}
+                    </p>
                   )}
-                  {allItems.map((item) => {
+                  {(periodicSubView === 'makeup' ? periodicMakeupItems : periodicCareItems).map((item) => {
                     const isChecked = !!periodicChecks[item.barcode]
                     const isUnavailable = !!periodicUnavailable[item.barcode]
                     return (
