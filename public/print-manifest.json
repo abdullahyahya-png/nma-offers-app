@@ -1,14 +1,20 @@
 {
-  "name": "واجهة الطباعة السريعة - NMA",
-  "short_name": "NMA Print",
-  "description": "طباعة ملصقات العروض بسرعة - NMA",
+  "name": "NMA Offer Print",
+  "short_name": "NMA Offer Print",
   "start_url": "/print",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#150971",
-  "orientation": "portrait-primary",
   "icons": [
-    { "src": "/logo.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/logo.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }
