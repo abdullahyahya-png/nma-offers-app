@@ -301,12 +301,15 @@ export default function PrintPage() {
     return () => clearTimeout(timer)
   }, [status])
 
-  // البانر الأخضر "الملف جاهز" يقفل تلقائياً لو المستخدم نسى يضغط عليه أو يسكره
+  // البانر الأخضر يقفل تلقائياً بس لو ملف واحد بسيط (مو منتصف سلسلة أجزاء) —
+  // عشان ما يضيع زر "توليد الجزء التالي" لو المستخدم أخذ وقته يتأكد من الملف المنزّل
   useEffect(() => {
     if (readyDownloads.length === 0) return
+    const isMidSequence = bulkJob && bulkJob.currentChunk + 1 < bulkJob.totalChunks
+    if (isMidSequence) return
     const timer = setTimeout(() => setReadyDownloads([]), 60000)
     return () => clearTimeout(timer)
-  }, [readyDownloads])
+  }, [readyDownloads, bulkJob])
 
   // التشييك الدوري محفوظ محلياً بهذا الجهاز بس (ما يشتركه أي جهاز ثاني)
   useEffect(() => {
