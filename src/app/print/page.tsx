@@ -821,7 +821,7 @@ export default function PrintPage() {
                   رفع ملف إكسل باركودات
                 </h2>
                 <p className="text-xs text-gray-500 font-medium mb-4">
-                  ارفع أي ملف Excel فيه عمود باركودات (أي فرع أو أي مصدر)، ونطابقها تلقائياً مع العروض الحالية
+                  ارفع أي ملف Excel بعمود باركودات (من أي فرع أو مصدر)، ونولّد لك ملصقاتها المطابقة تلقائياً — جاهزة للتحميل مباشرة
                 </p>
                 <label className="flex items-center justify-center gap-2 border-2 border-dashed border-[var(--navy)]/25 rounded-xl p-6 cursor-pointer hover:border-[var(--navy)] hover:bg-[var(--navy)]/5 transition-colors">
                   <UploadCloud size={20} className="text-[var(--navy)]" />
