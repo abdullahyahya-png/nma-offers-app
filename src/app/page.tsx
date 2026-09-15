@@ -108,10 +108,6 @@ const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
   { id: 'history', label: 'سجل التحديثات', icon: History },
   { id: 'manual', label: 'إضافة يدوية', icon: PlusCircle },
   { id: 'variety', label: 'ملصقات متنوعة', icon: Layers },
-  { id: 'messages', label: 'الرسائل', icon: MessageCircle },
-  { id: 'whatsapp', label: 'واتساب الفروع', icon: Phone },
-  { id: 'accounts', label: 'حسابات الفروع', icon: KeyRound },
-  { id: 'audit', label: 'تدقيق الملصقات', icon: ClipboardCheck },
   { id: 'activity', label: 'سجل النشاط', icon: History },
   { id: 'table', label: 'جدول المنتجات', icon: Package },
 ]
@@ -982,18 +978,7 @@ export default function AdminPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-10 py-6 md:py-8 flex flex-col md:flex-row gap-6 items-start">
         <aside className="w-full md:w-72 md:shrink-0 md:sticky md:top-8 space-y-4">
           <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <button
-                onClick={() => setActiveSection('messages')}
-                className="relative text-[var(--navy)]"
-              >
-                <Bell size={19} />
-                {unreadFromBranches > 0 && (
-                  <span className="absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full bg-[var(--red)] text-white text-[9px] font-bold flex items-center justify-center">
-                    {unreadFromBranches}
-                  </span>
-                )}
-              </button>
+            <div className="flex items-center justify-end mb-3">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-bold text-[var(--navy)]">مرحباً عبدالله</p>
                 <div className="w-9 h-9 rounded-full bg-[var(--navy)] flex items-center justify-center font-bold text-white text-sm">
@@ -1307,8 +1292,6 @@ export default function AdminPage() {
                   const batchItems = itemsForBatch(batch)
                   const isOpen = expandedBatchId === batch.id
                   const isCancel = batch.batch_type === 'cancel'
-                  const respondedMap = isCancel ? removalMap : activationMap
-                  const respondedSet = respondedMap[batch.id] || new Set()
                   return (
                     <div key={batch.id}>
                       <button
@@ -1325,9 +1308,6 @@ export default function AdminPage() {
                         <div className="flex items-center gap-3">
                           <span className={`text-xs font-bold px-2.5 py-1 rounded-md ${isCancel ? 'bg-[var(--red)]/10 text-[var(--red)]' : 'bg-emerald-100 text-emerald-700'}`}>
                             {isCancel ? 'إلغاء' : 'جديد'} · {batchItems.length}
-                          </span>
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-[var(--navy)]/10 text-[var(--navy)]">
-                            {respondedSet.size}/{branches.length} استجاب
                           </span>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDeleteBatch(batch) }}
@@ -1353,38 +1333,6 @@ export default function AdminPage() {
                               {batchItems.length === 0 && (
                                 <p className="text-gray-400 text-xs text-center py-2">ما فيه منتجات مرتبطة</p>
                               )}
-                            </div>
-                          </div>
-
-                          <div>
-                            <p className="text-xs font-bold text-gray-500 mb-2">
-                              {isCancel ? 'حالة الفروع (إزالة الملصقات)' : 'حالة الفروع (تفعيل التحديث)'}
-                            </p>
-                            <div className="grid sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
-                              {branches.map((b) => {
-                                const done = respondedSet.has(b.id)
-                                return (
-                                  <div
-                                    key={b.id}
-                                    className={`flex items-center justify-between text-xs rounded-lg px-3 py-2 border ${
-                                      done ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'
-                                    }`}
-                                  >
-                                    <span className="flex items-center gap-1.5 text-[var(--navy)] font-bold">
-                                      <Store size={12} />
-                                      {b.name}
-                                    </span>
-                                    {done ? (
-                                      <span className="flex items-center gap-1 text-emerald-600 font-bold">
-                                        <CheckCircle2 size={12} />
-                                        {isCancel ? 'أزال' : 'فعّل'}
-                                      </span>
-                                    ) : (
-                                      <span className="text-gray-400 font-bold">لسه ما استجاب</span>
-                                    )}
-                                  </div>
-                                )
-                              })}
                             </div>
                           </div>
                         </div>
