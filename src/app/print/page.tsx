@@ -1301,9 +1301,6 @@ export default function PrintPage() {
                     className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
                   />
                 </div>
-                <p className="text-[11px] text-gray-400 font-medium mt-2">
-                  منتجات بدون باركود (نفس البراند بدرجات/نكهات مختلفة) — بحث بالاسم بس
-                </p>
               </div>
 
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
