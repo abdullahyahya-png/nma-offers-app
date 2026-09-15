@@ -17,6 +17,13 @@ interface OfferItem {
   is_makeup?: boolean
 }
 
+interface VarietyLabel {
+  id: string
+  product_name: string
+  previous_price: number
+  offer_price: number
+}
+
 interface LabelData {
   name: string
   offerPriceText: string
@@ -127,10 +134,13 @@ function itemToLabelData(item: OfferItem): LabelData {
 }
 
 export default function PrintPage() {
-  const [activeSection, setActiveSection] = useState<'general' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'excel' | 'downloads' | 'queue' | 'periodicCheck' | 'makeup' | 'variety'>('general')
   const [allItems, setAllItems] = useState<OfferItem[]>([])
   const [searchText, setSearchText] = useState('')
   const [makeupSearchText, setMakeupSearchText] = useState('')
+  const [varietyItems, setVarietyItems] = useState<VarietyLabel[]>([])
+  const [varietySearchText, setVarietySearchText] = useState('')
+  const [varietyPrintingId, setVarietyPrintingId] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [bgReady, setBgReady] = useState(false)
   const [printingId, setPrintingId] = useState<string | null>(null)
@@ -292,6 +302,10 @@ export default function PrintPage() {
     ? makeupItems.filter((item) => item.barcode.includes(makeupSearchText.trim()) || item.product_name.includes(makeupSearchText.trim()))
     : makeupItems
 
+  const filteredVarietyItems = varietySearchText.trim().length >= 1
+    ? varietyItems.filter((item) => item.product_name.includes(varietySearchText.trim()))
+    : varietyItems
+
   // نطبّق نفس الاستثناء على نتائج مطابقة ملف الإكسل — الطباعة/التحميل الجماعي هنا يستبعد المكياج
   const excelMatchedNonMakeup = excelMatchedItems.filter((item) => !item.is_makeup)
   const excelMatchedMakeupCount = excelMatchedItems.length - excelMatchedNonMakeup.length
@@ -386,8 +400,14 @@ export default function PrintPage() {
     setAllItems(all.filter((i) => i.is_active !== false))
   }
 
+  const fetchVarietyItems = async () => {
+    const { data } = await supabase.from('variety_labels').select('*').order('created_at', { ascending: false })
+    if (data) setVarietyItems(data)
+  }
+
   useEffect(() => {
     fetchOffers()
+    fetchVarietyItems()
 
     const { data: bgData } = supabase.storage.from('label-assets').getPublicUrl('label-bg.png')
     const img = new Image()
@@ -402,6 +422,7 @@ export default function PrintPage() {
     const channel = supabase
       .channel('print-general-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'offer_items' }, () => fetchOffers())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'variety_labels' }, () => fetchVarietyItems())
       .subscribe()
 
     return () => {
@@ -684,6 +705,51 @@ export default function PrintPage() {
     }
   }
 
+  // نفس منطق الملصق العادي، بس بدون باركود (منطقة الباركود تطلع فاضية)
+  const handleVarietyAction = async (item: VarietyLabel, mode: 'download' | 'print') => {
+    if (!bgReady || !bgImageRef.current) {
+      setStatus('جاري تحميل قالب الملصق، حاول بعد ثانيتين')
+      return
+    }
+    const printWindow = mode === 'print' ? window.open('', '_blank') : null
+    setVarietyPrintingId(item.id)
+    setStatus('جاري تجهيز الملصق بأعلى جودة، لحظات...')
+    try {
+      await document.fonts.load('900 90px Tajawal')
+      await document.fonts.load('700 58px Tajawal')
+      await document.fonts.load('700 34px Tajawal')
+
+      const data: LabelData = {
+        name: item.product_name,
+        offerPriceText: item.offer_price.toFixed(2),
+        prevPriceText: item.previous_price.toFixed(2),
+        barcodeText: '',
+      }
+      const canvas = await renderLabelCanvas(data)
+      const doc = new jsPDF({ unit: 'pt', format: [296.28, 496.2] })
+      doc.addImage(canvas, 'PNG', 0, 0, 296.28, 496.2)
+
+      if (mode === 'print') {
+        doc.autoPrint()
+        const blobUrl = pdfToBlobUrl(doc)
+        if (printWindow) {
+          printWindow.location.href = blobUrl as unknown as string
+          setStatus('تم فتح نافذة الطباعة')
+        } else {
+          setStatus('المتصفح منع فتح نافذة الطباعة — اسمح بالنوافذ المنبثقة وحاول من جديد')
+        }
+      } else {
+        doc.save(`ملصق_متنوع_${item.product_name}.pdf`)
+        setStatus('تم تحميل الملصق بنجاح')
+      }
+    } catch (err: any) {
+      if (printWindow) printWindow.close()
+      setStatus(`صار خطأ: ${err?.message || 'غير معروف'}`)
+    } finally {
+      setVarietyPrintingId(null)
+    }
+  }
+
   return (
     <div className="min-h-screen w-full bg-[var(--background)] overflow-x-hidden">
       <InstallPWAButtonAuto />
@@ -763,6 +829,15 @@ export default function PrintPage() {
             >
               <Layers size={15} />
               عروض المكياج
+            </button>
+            <button
+              onClick={() => setActiveSection('variety')}
+              className={`w-full flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                activeSection === 'variety' ? 'bg-[var(--navy)]/10 text-[var(--navy)]' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Layers size={15} />
+              ملصقات متنوعة
             </button>
           </div>
         </aside>
@@ -1197,6 +1272,118 @@ export default function PrintPage() {
                                 <button
                                   onClick={() => handleAction(item, 'print')}
                                   disabled={printingId === item.id}
+                                  className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Printer size={13} />
+                                  طباعة
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'variety' && (
+            <div className="space-y-4">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-4 shadow-sm">
+                <div className="relative">
+                  <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={varietySearchText}
+                    onChange={(e) => setVarietySearchText(e.target.value)}
+                    placeholder="ابحث بالاسم"
+                    className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-3 pr-9 text-sm text-[var(--navy)] font-medium focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                  />
+                </div>
+                <p className="text-[11px] text-gray-400 font-medium mt-2">
+                  منتجات بدون باركود (نفس البراند بدرجات/نكهات مختلفة) — بحث بالاسم بس
+                </p>
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Layers size={16} />
+                    ملصقات متنوعة ({filteredVarietyItems.length})
+                  </h2>
+                </div>
+
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {filteredVarietyItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</p>
+                  )}
+                  {filteredVarietyItems.map((item) => (
+                    <div key={item.id} className="p-3.5 space-y-2">
+                      <div>
+                        <p className="text-sm font-bold text-[var(--navy)]">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                          <span className="text-[var(--red)] font-bold">{item.offer_price.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleVarietyAction(item, 'download')}
+                          disabled={varietyPrintingId === item.id}
+                          className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Download size={13} />
+                          تحميل
+                        </button>
+                        <button
+                          onClick={() => handleVarietyAction(item, 'print')}
+                          disabled={varietyPrintingId === item.id}
+                          className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Printer size={13} />
+                          طباعة
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="sticky top-0 bg-[var(--navy)] text-white z-10">
+                        <tr>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر البيع</th>
+                          <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                          <th className="p-3 text-center font-bold border-2 border-white/20">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredVarietyItems.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</td>
+                          </tr>
+                        )}
+                        {filteredVarietyItems.map((item, i) => (
+                          <tr key={item.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'} hover:bg-[var(--yellow)]/10 transition-colors`}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">{item.product_name}</td>
+                            <td className="p-3 text-gray-500 font-bold line-through border-2 border-[var(--navy)]/10">{item.previous_price.toFixed(2)}</td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">{item.offer_price.toFixed(2)}</td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleVarietyAction(item, 'download')}
+                                  disabled={varietyPrintingId === item.id}
+                                  className="flex items-center gap-1.5 bg-white border-2 border-[var(--navy)]/15 hover:bg-[var(--navy)]/10 text-[var(--navy)] text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                  <Download size={13} />
+                                  تحميل
+                                </button>
+                                <button
+                                  onClick={() => handleVarietyAction(item, 'print')}
+                                  disabled={varietyPrintingId === item.id}
                                   className="flex items-center gap-1.5 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
                                 >
                                   <Printer size={13} />

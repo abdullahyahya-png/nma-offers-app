@@ -39,6 +39,7 @@ import {
   Phone,
   KeyRound,
   ClipboardCheck,
+  Layers,
 } from 'lucide-react'
 
 interface OfferItem {
@@ -52,6 +53,14 @@ interface OfferItem {
   batch_id?: string | null
   cancelled_batch_id?: string | null
   is_makeup?: boolean
+}
+
+interface VarietyLabel {
+  id?: string
+  product_name: string
+  previous_price: number
+  offer_price: number
+  created_at?: string
 }
 
 interface OfferBatch {
@@ -88,7 +97,7 @@ interface ActivityLog {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
-type SectionId = 'stats' | 'upload' | 'label' | 'cancel' | 'history' | 'manual' | 'messages' | 'table' | 'whatsapp' | 'activity' | 'accounts' | 'audit' | 'settings'
+type SectionId = 'stats' | 'upload' | 'label' | 'cancel' | 'history' | 'manual' | 'messages' | 'table' | 'whatsapp' | 'activity' | 'accounts' | 'audit' | 'settings' | 'variety'
 type TableFilter = 'active' | 'all' | 'cancelled'
 
 const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
@@ -98,6 +107,7 @@ const SECTIONS: { id: SectionId; label: string; icon: any }[] = [
   { id: 'cancel', label: 'إدارة الإلغاء', icon: XCircle },
   { id: 'history', label: 'سجل التحديثات', icon: History },
   { id: 'manual', label: 'إضافة يدوية', icon: PlusCircle },
+  { id: 'variety', label: 'ملصقات متنوعة', icon: Layers },
   { id: 'messages', label: 'الرسائل', icon: MessageCircle },
   { id: 'whatsapp', label: 'واتساب الفروع', icon: Phone },
   { id: 'accounts', label: 'حسابات الفروع', icon: KeyRound },
@@ -179,6 +189,17 @@ export default function AdminPage() {
   const [factoryResetInput, setFactoryResetInput] = useState('')
   const [resettingFactory, setResettingFactory] = useState(false)
 
+  const [varietyItems, setVarietyItems] = useState<VarietyLabel[]>([])
+  const [pendingVarietyFile, setPendingVarietyFile] = useState<File | null>(null)
+  const [varietyNewName, setVarietyNewName] = useState('')
+  const [varietyNewPrevPrice, setVarietyNewPrevPrice] = useState('')
+  const [varietyNewOfferPrice, setVarietyNewOfferPrice] = useState('')
+  const [uploadingVariety, setUploadingVariety] = useState(false)
+  const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null)
+  const [editVarietyName, setEditVarietyName] = useState('')
+  const [editVarietyPrevPrice, setEditVarietyPrevPrice] = useState('')
+  const [editVarietyOfferPrice, setEditVarietyOfferPrice] = useState('')
+
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm })
   }
@@ -228,6 +249,11 @@ export default function AdminPage() {
     const data = await fetchAllRows('offer_items', 'created_at')
     setItems(data)
     setLoading(false)
+  }
+
+  const fetchVarietyItems = async () => {
+    const data = await fetchAllRows('variety_labels', 'created_at')
+    setVarietyItems(data)
   }
 
   const fetchBatches = async () => {
@@ -317,6 +343,7 @@ export default function AdminPage() {
     fetchConfirmations()
     fetchActivityLogs()
     refreshLabelPreview()
+    fetchVarietyItems()
 
     const channel = supabase
       .channel('admin-page-realtime')
@@ -598,6 +625,126 @@ export default function AdminPage() {
       setNewPrevPrice('')
       setNewOfferPrice('')
       fetchItems()
+    }
+  }
+
+  // ==== الملصقات المتنوعة (منتجات بدون باركود) ====
+
+  const handleSelectVarietyFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPendingVarietyFile(file)
+  }
+
+  const handleConfirmVarietyUpload = () => {
+    if (!pendingVarietyFile) return
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      const data = event.target?.result
+      const workbook = XLSX.read(data, { type: 'binary' })
+      const sheetName = workbook.SheetNames[0]
+      const sheet = workbook.Sheets[sheetName]
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1 })
+      // الأعمدة: باركود (فاضي دايماً هنا)، الاسم، سعر البيع، سعر العرض
+      const parsedItems = rows.slice(1)
+        .filter((row) => row.length >= 4 && row[1])
+        .map((row) => ({
+          product_name: String(row[1]).trim(),
+          previous_price: Number(row[2]),
+          offer_price: Number(row[3]),
+        }))
+        .filter((item) => item.product_name && !isNaN(item.previous_price) && !isNaN(item.offer_price))
+
+      if (parsedItems.length === 0) {
+        setStatus('الملف فاضي أو صيغته غلط — تأكد من الأعمدة: باركود، الاسم، سعر البيع، سعر العرض')
+        return
+      }
+
+      setUploadingVariety(true)
+      setStatus(`جاري رفع ${parsedItems.length} ملصق متنوع...`)
+
+      const { error } = await supabase.from('variety_labels').insert(parsedItems)
+
+      setUploadingVariety(false)
+
+      if (error) {
+        setStatus(`خطأ: ${error.message}`)
+      } else {
+        setStatus(`تم رفع ${parsedItems.length} ملصق متنوع بنجاح`)
+        setPendingVarietyFile(null)
+        logActivity('رفع ملصقات متنوعة', undefined, `${parsedItems.length} ملصق`)
+        fetchVarietyItems()
+      }
+    }
+    reader.readAsBinaryString(pendingVarietyFile)
+  }
+
+  const handleAddVarietyManual = async () => {
+    if (!varietyNewName || !varietyNewPrevPrice || !varietyNewOfferPrice) {
+      setStatus('عبّي كل الحقول أول')
+      return
+    }
+    const { error } = await supabase.from('variety_labels').insert([{
+      product_name: varietyNewName.trim(),
+      previous_price: Number(varietyNewPrevPrice),
+      offer_price: Number(varietyNewOfferPrice),
+    }])
+    if (error) {
+      setStatus(`خطأ: ${error.message}`)
+    } else {
+      setStatus('تمت الإضافة بنجاح')
+      setVarietyNewName('')
+      setVarietyNewPrevPrice('')
+      setVarietyNewOfferPrice('')
+      fetchVarietyItems()
+    }
+  }
+
+  const handleDeleteVariety = async (id: string) => {
+    askConfirm('متأكد إنك تبي تحذف هذا الملصق المتنوع نهائياً؟', async () => {
+      const { error } = await supabase.from('variety_labels').delete().eq('id', id)
+      if (error) {
+        setStatus(`خطأ بالحذف: ${error.message}`)
+      } else {
+        setVarietyItems((prev) => prev.filter((item) => item.id !== id))
+      }
+    })
+  }
+
+  const handleStartEditVariety = (item: VarietyLabel) => {
+    setEditingVarietyId(item.id!)
+    setEditVarietyName(item.product_name)
+    setEditVarietyPrevPrice(String(item.previous_price))
+    setEditVarietyOfferPrice(String(item.offer_price))
+  }
+
+  const handleCancelEditVariety = () => {
+    setEditingVarietyId(null)
+    setEditVarietyName('')
+    setEditVarietyPrevPrice('')
+    setEditVarietyOfferPrice('')
+  }
+
+  const handleSaveEditVariety = async (id: string) => {
+    const name = editVarietyName.trim()
+    const prev = Number(editVarietyPrevPrice)
+    const offer = Number(editVarietyOfferPrice)
+    if (!name || isNaN(prev) || isNaN(offer)) {
+      setStatus('تأكد من صحة البيانات')
+      return
+    }
+    const { error } = await supabase
+      .from('variety_labels')
+      .update({ product_name: name, previous_price: prev, offer_price: offer })
+      .eq('id', id)
+    if (error) {
+      setStatus(`خطأ بالتعديل: ${error.message}`)
+    } else {
+      setVarietyItems((prev2) =>
+        prev2.map((item) => (item.id === id ? { ...item, product_name: name, previous_price: prev, offer_price: offer } : item))
+      )
+      setStatus('تم التعديل بنجاح')
+      handleCancelEditVariety()
     }
   }
 
@@ -1279,6 +1426,169 @@ export default function AdminPage() {
             </div>
           )}
 
+          {activeSection === 'variety' && (
+            <div className="space-y-5">
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm max-w-xl">
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="font-black text-sm text-[var(--navy)]">رفع ملصقات متنوعة</h2>
+                  <Layers size={16} className="text-[var(--navy)]" />
+                </div>
+                <p className="text-xs text-gray-600 font-medium mb-3">
+                  للمنتجات بدون باركود (نفس البراند بدرجات/نكهات مختلفة). أعمدة الملف: باركود (فاضي)، الاسم، سعر البيع، سعر العرض
+                </p>
+
+                {!pendingVarietyFile ? (
+                  <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[var(--navy)]/25 rounded-xl p-6 cursor-pointer hover:border-[var(--navy)] hover:bg-[var(--navy)]/5 transition-colors">
+                    <UploadCloud size={22} className="text-[var(--navy)]" />
+                    <span className="text-[var(--navy)] font-bold text-sm">اختر ملف Excel</span>
+                    <input type="file" accept=".xlsx,.xls" onChange={handleSelectVarietyFile} className="hidden" />
+                  </label>
+                ) : (
+                  <div className="border-2 border-[var(--navy)]/30 rounded-xl p-4 bg-[var(--navy)]/5">
+                    <div className="flex items-center gap-2 mb-3 text-[var(--navy)] text-sm font-bold">
+                      <FileCheck size={16} />
+                      {pendingVarietyFile.name}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleConfirmVarietyUpload}
+                        disabled={uploadingVariety}
+                        className="flex-1 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white text-sm font-bold py-2 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {uploadingVariety ? 'جاري الرفع...' : 'تأكيد ورفع الملصقات'}
+                      </button>
+                      <button
+                        onClick={() => setPendingVarietyFile(null)}
+                        className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-bold rounded-lg transition-colors"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm max-w-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-black text-sm text-[var(--navy)]">إضافة ملصق متنوع يدوياً</h2>
+                  <PlusCircle size={16} className="text-[var(--navy)]" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <input value={varietyNewName} onChange={(e) => setVarietyNewName(e.target.value)} placeholder="اسم المنتج"
+                    className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
+                  <div className="relative">
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">SR</span>
+                    <input value={varietyNewPrevPrice} onChange={(e) => setVarietyNewPrevPrice(e.target.value)} placeholder="سعر البيع" type="number"
+                      className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 pr-10 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
+                  </div>
+                  <div className="relative">
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">SR</span>
+                    <input value={varietyNewOfferPrice} onChange={(e) => setVarietyNewOfferPrice(e.target.value)} placeholder="سعر العرض" type="number"
+                      className="w-full bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2.5 pr-10 text-sm text-[var(--navy)] font-medium placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20" />
+                  </div>
+                </div>
+                <button onClick={handleAddVarietyManual}
+                  className="mt-4 bg-[var(--navy)] hover:bg-[#0f1a4d] text-white px-6 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center gap-2">
+                  <PlusCircle size={16} />
+                  إضافة
+                </button>
+              </div>
+
+              <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                  <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
+                    <Layers size={16} />
+                    كل الملصقات المتنوعة ({varietyItems.length})
+                  </h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead className="bg-[var(--navy)] text-white">
+                      <tr>
+                        <th className="p-3 text-right font-bold border-2 border-white/20">اسم المنتج</th>
+                        <th className="p-3 text-right font-bold border-2 border-white/20">سعر البيع</th>
+                        <th className="p-3 text-right font-bold border-2 border-white/20">سعر العرض</th>
+                        <th className="p-3 text-center font-bold border-2 border-white/20">حذف</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {varietyItems.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="p-6 text-center text-gray-400 text-sm">ما فيه ملصقات متنوعة بعد</td>
+                        </tr>
+                      )}
+                      {varietyItems.map((item, i) => {
+                        const isEditing = editingVarietyId === item.id
+                        return (
+                          <tr key={item.id} className={i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'}>
+                            <td className="p-3 text-[var(--navy)] font-bold border-2 border-[var(--navy)]/10">
+                              {isEditing ? (
+                                <input
+                                  value={editVarietyName}
+                                  onChange={(e) => setEditVarietyName(e.target.value)}
+                                  className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                                />
+                              ) : (
+                                item.product_name
+                              )}
+                            </td>
+                            <td className="p-3 text-gray-500 font-bold border-2 border-[var(--navy)]/10">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  value={editVarietyPrevPrice}
+                                  onChange={(e) => setEditVarietyPrevPrice(e.target.value)}
+                                  className="w-24 bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                                />
+                              ) : (
+                                <span className="line-through">{item.previous_price.toFixed(2)}</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-[var(--red)] font-black border-2 border-[var(--navy)]/10">
+                              {isEditing ? (
+                                <input
+                                  type="number"
+                                  value={editVarietyOfferPrice}
+                                  onChange={(e) => setEditVarietyOfferPrice(e.target.value)}
+                                  className="w-24 bg-white border-2 border-[var(--red)]/30 rounded-lg p-1.5 text-sm text-[var(--red)] font-black focus:outline-none focus:ring-2 focus:ring-[var(--red)]/20"
+                                />
+                              ) : (
+                                item.offer_price.toFixed(2)
+                              )}
+                            </td>
+                            <td className="p-3 text-center border-2 border-[var(--navy)]/10">
+                              <div className="flex items-center justify-center gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <button onClick={() => handleSaveEditVariety(item.id!)} className="text-emerald-600 hover:text-emerald-700 transition-colors" title="حفظ">
+                                      <Check size={16} />
+                                    </button>
+                                    <button onClick={handleCancelEditVariety} className="text-gray-400 hover:text-gray-600 transition-colors" title="إلغاء">
+                                      <X size={16} />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button onClick={() => handleStartEditVariety(item)} className="text-gray-400 hover:text-[var(--navy)] transition-colors" title="تعديل">
+                                      <Pencil size={15} />
+                                    </button>
+                                    <button onClick={() => handleDeleteVariety(item.id!)} className="text-gray-400 hover:text-[var(--red)] transition-colors" title="حذف">
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeSection === 'messages' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 p-6 shadow-sm">
@@ -1478,6 +1788,138 @@ export default function AdminPage() {
                     </button>
                   </div>
                 )}
+
+                <div className="md:hidden divide-y-2 divide-[var(--navy)]/10 max-h-[600px] overflow-y-auto">
+                  {paginatedItems.length === 0 && (
+                    <p className="p-6 text-center text-gray-400 text-sm">ما فيه نتائج</p>
+                  )}
+                  {paginatedItems.map((item) => {
+                    const discount = item.previous_price
+                      ? Math.round((1 - item.offer_price / item.previous_price) * 100)
+                      : 0
+                    const cancelled = item.is_active === false
+                    const isEditing = editingId === item.id
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 space-y-2 ${cancelled ? 'opacity-50' : ''} ${
+                          selectedIds.has(item.id!) ? 'bg-[var(--navy)]/10' : isEditing ? 'bg-[var(--yellow)]/10' : 'bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(item.id!)}
+                              onChange={() => toggleSelectItem(item.id!)}
+                              className="w-4 h-4 mt-1 cursor-pointer shrink-0"
+                            />
+                            <div className="min-w-0">
+                              {isEditing ? (
+                                <div className="space-y-1.5">
+                                  <input
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    className="w-full min-w-[160px] bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                                  />
+                                  <label className="flex items-center gap-1.5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={editIsMakeup}
+                                      onChange={(e) => setEditIsMakeup(e.target.checked)}
+                                      className="w-3.5 h-3.5 cursor-pointer accent-[var(--navy)]"
+                                    />
+                                    <span className="text-[11px] text-gray-500 font-medium">فئة مكياج</span>
+                                  </label>
+                                </div>
+                              ) : (
+                                <>
+                                  <p className="text-sm font-bold text-[var(--navy)] flex items-center gap-1.5 flex-wrap">
+                                    {item.product_name}
+                                    {item.is_makeup && (
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700 shrink-0">مكياج</span>
+                                    )}
+                                  </p>
+                                  <p className="text-xs text-gray-500 mt-0.5">{item.barcode}</p>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={() => handleSaveEdit(item.id!)}
+                                  disabled={savingEdit}
+                                  className="text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                  title="حفظ"
+                                >
+                                  <Check size={16} />
+                                </button>
+                                <button onClick={handleCancelEdit} className="text-gray-400 hover:text-gray-600 transition-colors" title="إلغاء">
+                                  <X size={16} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleStartEdit(item)}
+                                  className="text-gray-400 hover:text-[var(--navy)] transition-colors"
+                                  title="تعديل"
+                                >
+                                  <Pencil size={15} />
+                                </button>
+                                <button onClick={() => handleDelete(item.id!)} className="text-gray-400 hover:text-[var(--red)] transition-colors" title="حذف">
+                                  <Trash2 size={16} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          {isEditing ? (
+                            <div className="flex gap-2 flex-1">
+                              <input
+                                type="number"
+                                value={editPrevPrice}
+                                onChange={(e) => setEditPrevPrice(e.target.value)}
+                                placeholder="سعر سابق"
+                                className="w-1/2 bg-white border-2 border-[var(--navy)]/20 rounded-lg p-1.5 text-sm text-[var(--navy)] font-bold focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                              />
+                              <input
+                                type="number"
+                                value={editOfferPrice}
+                                onChange={(e) => setEditOfferPrice(e.target.value)}
+                                placeholder="سعر عرض"
+                                className="w-1/2 bg-white border-2 border-[var(--red)]/30 rounded-lg p-1.5 text-sm text-[var(--red)] font-black focus:outline-none focus:ring-2 focus:ring-[var(--red)]/20"
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-sm">
+                              <span className="line-through text-gray-400">{item.previous_price.toFixed(2)}</span>{' '}
+                              <span className="text-[var(--red)] font-black">{item.offer_price.toFixed(2)}</span>
+                            </p>
+                          )}
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-md shrink-0 ${discountBadgeClass(discount)}`}>
+                            {discount}%-
+                          </span>
+                        </div>
+
+                        {cancelled && (
+                          <button
+                            onClick={() => handleReactivate(item.id!)}
+                            className="text-xs font-bold text-[var(--red)] hover:text-emerald-600 transition-colors"
+                          >
+                            ملغى (إعادة تفعيل)
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm border-collapse">
                   <thead className="bg-[var(--navy)] text-white">
                     <tr>
@@ -1625,6 +2067,7 @@ export default function AdminPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               <div className="p-4 border-t-2 border-[var(--navy)]/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-[var(--navy)]/5">
