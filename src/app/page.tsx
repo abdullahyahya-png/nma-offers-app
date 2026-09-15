@@ -186,6 +186,7 @@ export default function AdminPage() {
   const [resettingFactory, setResettingFactory] = useState(false)
 
   const [varietyItems, setVarietyItems] = useState<VarietyLabel[]>([])
+  const [varietySearchQuery, setVarietySearchQuery] = useState('')
   const [pendingVarietyFile, setPendingVarietyFile] = useState<File | null>(null)
   const [varietyNewName, setVarietyNewName] = useState('')
   const [varietyNewPrevPrice, setVarietyNewPrevPrice] = useState('')
@@ -332,6 +333,12 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
+    if (!status) return
+    const timer = setTimeout(() => setStatus(''), 4000)
+    return () => clearTimeout(timer)
+  }, [status])
+
+  useEffect(() => {
     fetchItems()
     fetchBatches()
     fetchBranches()
@@ -390,6 +397,12 @@ export default function AdminPage() {
     if (!q) return visibleItems
     return visibleItems.filter((i) => i.barcode.includes(q) || i.product_name.includes(q))
   }, [visibleItems, tableSearchQuery])
+
+  const filteredVarietyItems = useMemo(() => {
+    const q = varietySearchQuery.trim()
+    if (!q) return varietyItems
+    return varietyItems.filter((i) => i.product_name.includes(q))
+  }, [varietyItems, varietySearchQuery])
 
   const avgDiscount = useMemo(() => {
     if (activeItemsList.length === 0) return 0
@@ -1443,11 +1456,20 @@ export default function AdminPage() {
               </div>
 
               <div className="bg-[var(--card)] rounded-2xl border-2 border-[var(--navy)]/15 overflow-hidden shadow-sm">
-                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5">
+                <div className="p-4 border-b-2 border-[var(--navy)]/10 bg-[var(--navy)]/5 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="font-black text-sm text-[var(--navy)] flex items-center gap-2">
                     <Layers size={16} />
-                    كل الملصقات المتنوعة ({varietyItems.length})
+                    كل الملصقات المتنوعة ({filteredVarietyItems.length})
                   </h2>
+                  <div className="relative">
+                    <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={varietySearchQuery}
+                      onChange={(e) => setVarietySearchQuery(e.target.value)}
+                      placeholder="ابحث بالاسم"
+                      className="bg-white border-2 border-[var(--navy)]/15 rounded-lg p-2 pr-8 text-xs text-[var(--navy)] font-medium w-48 focus:outline-none focus:ring-2 focus:ring-[var(--navy)]/20"
+                    />
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
@@ -1460,12 +1482,14 @@ export default function AdminPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {varietyItems.length === 0 && (
+                      {filteredVarietyItems.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="p-6 text-center text-gray-400 text-sm">ما فيه ملصقات متنوعة بعد</td>
+                          <td colSpan={4} className="p-6 text-center text-gray-400 text-sm">
+                            {varietySearchQuery ? 'ما فيه نتائج مطابقة' : 'ما فيه ملصقات متنوعة بعد'}
+                          </td>
                         </tr>
                       )}
-                      {varietyItems.map((item, i) => {
+                      {filteredVarietyItems.map((item, i) => {
                         const isEditing = editingVarietyId === item.id
                         return (
                           <tr key={item.id} className={i % 2 === 0 ? 'bg-white' : 'bg-[var(--navy)]/[0.03]'}>
